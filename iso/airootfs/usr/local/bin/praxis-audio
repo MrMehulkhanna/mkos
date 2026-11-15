@@ -95,11 +95,31 @@ case "${1:-status}" in
         pactl set-default-sink "$TOGETHER_SINK" 2>/dev/null \
             || { echo "PipeWire did not create the combined output" >&2; exit 1; }
         echo "Playing on $# speakers together, in sync."
+        touch "$HOME/.config/praxis/audio-together" 2>/dev/null || { mkdir -p "$HOME/.config/praxis"; touch "$HOME/.config/praxis/audio-together"; }
         ;;
     single)
-        rm -f "$TOGETHER_CONF"
+        rm -f "$TOGETHER_CONF" "$HOME/.config/praxis/audio-together"
         restart_audio
         echo "Back to one speaker."
+        ;;
+    restore)
+        # at login: something (a device appearing, an app) can pick another
+        # default; put the combined output back if the user chose it
+        [ -f "$HOME/.config/praxis/audio-together" ] || exit 0
+        for _ in $(seq 1 50); do pactl list short sinks 2>/dev/null | grep -q "$TOGETHER_SINK" && break; sleep 0.2; done
+        pactl set-default-sink "$TOGETHER_SINK" 2>/dev/null || true
+        ;;
+    delay)
+        # praxis-audio delay NAME MS: a speaker that plays late by itself (a
+        # monitor processing its sound) reports no such delay; tell PipeWire,
+        # and the combined output holds the others back to match it
+        sink="${2:-}"; ms="${3:-0}"
+        card=$(pactl -f json list sinks | python3 -c "import json,sys
+s=[x for x in json.load(sys.stdin) if x['name']=='$sink']
+print(s[0]['properties'].get('device.name','') + ' ' + (s[0].get('active_port') or '') if s else '')")
+        [ -n "${card// }" ] || { echo "no speaker called $sink" >&2; exit 1; }
+        pactl set-port-latency-offset ${card% *} ${card#* } $(( ms * 1000 ))
+        echo "$sink now treated as $ms ms late."
         ;;
     -h|--help|help)
         echo "Usage: praxis-audio {status|unmute|reset|list|together NAME...|single}"

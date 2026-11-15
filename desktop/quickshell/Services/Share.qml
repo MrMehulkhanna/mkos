@@ -248,6 +248,9 @@ fi
         function onRawEvent(ev) {
             if (ev.name === "monitoradded" || ev.name === "monitorremoved" || ev.name === "monitoraddedv2"
                 || ev.name === "monitorremovedv2" || ev.name === "configreloaded") root.refreshScreens()
+            // a reload puts screens back where the config says: restore the
+            // layout the user arranged
+            if (ev.name === "configreloaded") Quickshell.execDetached(["praxis-share", "restore-layout"])
         }
     }
 

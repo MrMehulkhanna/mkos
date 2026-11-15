@@ -90,6 +90,7 @@ hl.on("hyprland.start", function ()
   hl.exec_cmd("blueman-applet &")                     -- Bluetooth authentication agent (PIN/passkey/pairing prompts)
   hl.exec_cmd("/usr/lib/polkit-kde-authentication-agent-1")  -- GUI auth prompts for root-only hardware toggles
   hl.exec_cmd("praxis-mouse start")                  -- one mouse & keyboard across paired PCs, if switched on
+  hl.exec_cmd("praxis-audio restore")                -- several speakers together, if chosen
 end)
 
 

@@ -716,6 +716,12 @@ for n in order:
     x += round(m["width"] / m["scale"])
 # every screen in one eval: moved one by one they overlap for a moment and
 # Hyprland flashes a "monitor layout is set up incorrectly" warning
+# Two steps: first park every screen far apart, then put each in place.
+# Hyprland applies each position as it comes, so moving straight
+# to the new layout overlapped for a moment — the "monitor layout is set
+# up incorrectly" warning — whenever a screen moved past another.
+park = [__import__("re").sub(r"position = \"[^\"]*\"", "position = \"%dx0\"" % (100000 + 20000 * i), l) for i, l in enumerate(lua)]
+subprocess.run(["hyprctl", "eval", "\n".join(park)], stdout=subprocess.DEVNULL)
 subprocess.run(["hyprctl", "eval", "\n".join(lua)], stdout=subprocess.DEVNULL)
 ' "$@"
 }
@@ -748,6 +754,12 @@ for kv in sys.argv[1:]:
         continue
     mode = "%dx%d@%.3f" % (m["width"], m["height"], m["refreshRate"])
     lua.append("hl.monitor({ output = \"%s\", mode = \"%s\", position = \"%dx%d\", scale = %g })" % (n, mode, x, y, m["scale"]))
+# Two steps: first park every screen far apart, then put each in place.
+# Hyprland applies each position as it comes, so moving straight
+# to the new layout overlapped for a moment — the "monitor layout is set
+# up incorrectly" warning — whenever a screen moved past another.
+park = [__import__("re").sub(r"position = \"[^\"]*\"", "position = \"%dx0\"" % (100000 + 20000 * i), l) for i, l in enumerate(lua)]
+subprocess.run(["hyprctl", "eval", "\n".join(park)], stdout=subprocess.DEVNULL)
 subprocess.run(["hyprctl", "eval", "\n".join(lua)], stdout=subprocess.DEVNULL)
 ' "$@"
 }
@@ -892,6 +904,15 @@ case "${1:-}" in
     status)  cmd_status ;;
     arrange) shift; cmd_arrange "$@" ;;
     place)   shift; cmd_place "$@" ;;
+    restore-layout)
+        # after a config reload Hyprland puts screens back where the config
+        # says; put them back where the user arranged them
+        [ -s "$ORDER_FILE.pos" ] || exit 0
+        args=(); shared=$(cat "$MON_FILE" 2>/dev/null || true)
+        while read -r kv; do
+            if [ "${kv%%=*}" = SHARED ]; then [ -n "$shared" ] && args+=("$shared=${kv#*=}"); else args+=("$kv"); fi
+        done < "$ORDER_FILE.pos"
+        apply_place "${args[@]}" ;;
     scan)    shift; praxis-share-gate scan "$@" ;;
     doctor)  doctor ;;
     ""|-h|--help|help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
