@@ -34,7 +34,8 @@ Item {
     // nearest spot touching another screen, edge to edge, overlapping none
     function snap(d, others) {
         if (!others.length) return { x: 0, y: 0 }
-        const near = (v, t) => Math.abs(v - t) < Math.max(d.h, d.w) * 0.12
+        // generous: screens side by side almost always want their tops in line
+        const near = (v, t) => Math.abs(v - t) < Math.max(d.h, d.w) * 0.35
         let best = null, bestDist = 1e18
         for (const o of others) {
             const ys = [o.y, o.y + o.h - d.h, Math.min(Math.max(d.y, o.y - d.h + 1), o.y + o.h - 1)]

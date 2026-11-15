@@ -72,7 +72,22 @@ case "${1:-status}" in
     on)      mkdir -p "${FLAG%/*}"; touch "$FLAG"; start; ok "mouse & keyboard sharing on" ;;
     off)     rm -f "$FLAG"; stop; ok "mouse & keyboard sharing off" ;;
     start)   [ -f "$FLAG" ] && start || true ;;          # at login: only if switched on
-    pause)   stop ;;                                      # e.g. while sharing the screen; stays on
+    pause)
+        # While this PC's screen is shown on the other PC, stop grabbing the
+        # screen edge (the extra display sits there) but keep the daemon
+        # running, so the other PC's own mouse and keyboard can still come
+        # across and work on the shared screen it is showing.
+        running daemon || exit 0
+        for id in $("$(lm)" cli list 2>/dev/null | grep -oE '^id [0-9]+' | awk '{print $2}'); do
+            "$(lm)" cli deactivate "$id" >/dev/null 2>&1 || true
+        done ;;
+    resume)
+        [ -f "$FLAG" ] || exit 0
+        if running daemon; then
+            for id in $("$(lm)" cli list 2>/dev/null | grep -oE '^id [0-9]+' | awk '{print $2}'); do
+                "$(lm)" cli activate "$id" >/dev/null 2>&1 || true
+            done
+        else start; fi ;;
 
     restart)
         running daemon && { kill "$(cat "$STATE/daemon.pid")" 2>/dev/null || true; rm -f "$STATE/daemon.pid"; sleep 0.5; }

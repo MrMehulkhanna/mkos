@@ -681,7 +681,7 @@ cmd_stop() {
         hyprctl output remove "$mon" >/dev/null 2>&1 && ok "removed $mon"
     fi
     rm -f "$MON_FILE"
-    command -v praxis-mouse >/dev/null && praxis-mouse start >/dev/null 2>&1 || true
+    command -v praxis-mouse >/dev/null && praxis-mouse resume >/dev/null 2>&1 || true
 }
 
 # Put the screens side by side in the given order, left to right, tops
@@ -706,14 +706,17 @@ import json, sys, subprocess
 order = sys.argv[1:]
 ms = {m["name"]: m for m in json.load(sys.stdin)}
 x = 0
+lua = []
 for n in order:
     m = ms.get(n)
     if not m:
         continue
     mode = "%dx%d@%.3f" % (m["width"], m["height"], m["refreshRate"])
-    lua = "hl.monitor({ output = \"%s\", mode = \"%s\", position = \"%dx0\", scale = %g })" % (n, mode, x, m["scale"])
-    subprocess.run(["hyprctl", "eval", lua], stdout=subprocess.DEVNULL)
+    lua.append("hl.monitor({ output = \"%s\", mode = \"%s\", position = \"%dx0\", scale = %g })" % (n, mode, x, m["scale"]))
     x += round(m["width"] / m["scale"])
+# every screen in one eval: moved one by one they overlap for a moment and
+# Hyprland flashes a "monitor layout is set up incorrectly" warning
+subprocess.run(["hyprctl", "eval", "\n".join(lua)], stdout=subprocess.DEVNULL)
 ' "$@"
 }
 # praxis-share place NAME=X,Y ... — exact positions in logical pixels, from
@@ -736,6 +739,7 @@ apply_place() {
     monitors | python3 -c '
 import json, sys, subprocess
 ms = {m["name"]: m for m in json.load(sys.stdin)}
+lua = []
 for kv in sys.argv[1:]:
     n, xy = kv.split("=", 1)
     x, y = (int(float(v)) for v in xy.split(","))
@@ -743,8 +747,8 @@ for kv in sys.argv[1:]:
     if not m:
         continue
     mode = "%dx%d@%.3f" % (m["width"], m["height"], m["refreshRate"])
-    lua = "hl.monitor({ output = \"%s\", mode = \"%s\", position = \"%dx%d\", scale = %g })" % (n, mode, x, y, m["scale"])
-    subprocess.run(["hyprctl", "eval", lua], stdout=subprocess.DEVNULL)
+    lua.append("hl.monitor({ output = \"%s\", mode = \"%s\", position = \"%dx%d\", scale = %g })" % (n, mode, x, y, m["scale"]))
+subprocess.run(["hyprctl", "eval", "\n".join(lua)], stdout=subprocess.DEVNULL)
 ' "$@"
 }
 # place a just-created extra display where the user last put it
