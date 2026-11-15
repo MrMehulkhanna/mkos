@@ -67,7 +67,10 @@ Singleton {
         return speaker || sinks[0] || null
     }
     function _bestSource() {
-        const ext = sources.find(n => _isExternal(n))
+        // never a speaker monitor or a Praxis output as "the microphone":
+        // either records silence (or your own speakers), so the mic looks dead
+        const ext = sources.find(n => _isExternal(n) && !String(n.name || "").endsWith(".monitor")
+                                        && !String(n.name || "").startsWith("praxis-"))
         return ext || sources[0] || null
     }
 
