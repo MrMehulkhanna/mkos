@@ -42,6 +42,8 @@ PORT_FILE="$STATE_DIR/port"
 DEFAULT_PORT=5920
 DEFAULT_RES="1920x1080@60"
 WITH_AUDIO=1          # send sound with the picture unless told not to
+# "praxis-share sound off" keeps the sound on this PC's own speakers only
+[ "$(cat "$HOME/.config/praxis/share-sound" 2>/dev/null)" = off ] && WITH_AUDIO=0
 
 die()  { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 info() { printf '\033[36m•\033[0m %s\n' "$*"; }
@@ -982,6 +984,12 @@ case "${1:-}" in
     status)  cmd_status ;;
     arrange) shift; cmd_arrange "$@" ;;
     place)   shift; cmd_place "$@" ;;
+    sound)
+        # praxis-share sound on|off — send the sound to the viewer too, or
+        # keep it on this PC's speakers only; remembered for every share
+        case "${2:-}" in on|off) ;; *) die "usage: praxis-share sound on|off" ;; esac
+        mkdir -p "$HOME/.config/praxis"; echo "$2" > "$HOME/.config/praxis/share-sound"
+        ok "shared sound $2 — takes effect the next time sharing starts" ;;
     scale)
         # praxis-share scale 1|1.25|1.5|1.75|2 — text and windows on the shared
         # screen bigger or smaller; remembered, applied at once if sharing
