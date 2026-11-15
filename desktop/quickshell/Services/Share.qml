@@ -108,8 +108,9 @@ if [ -f "$S/viewer.pids" ] && kill -0 "$(awk '{print $1}' "$S/viewer.pids" 2>/de
 fi
 M="$XDG_RUNTIME_DIR/praxis-mouse"
 if [ -f "$M/daemon.pid" ] && kill -0 "$(cat "$M/daemon.pid")" 2>/dev/null; then echo "mouseOn=1"; else echo "mouseOn=0"; fi
-echo "mousePeers=$(awk -F' = ' '/^position/{gsub(/"/,"",$2);p=$2} /^hostname/{gsub(/"/,"",$2);printf "%s:%s,",p,$2}' "$HOME/.config/lan-mouse/config.toml" 2>/dev/null)"
-echo "mouseIps=$(awk -F' = ' '/^position/{gsub(/"/,"",$2);p=$2} /^ips/{gsub(/[]["]/,"",$2);printf "%s:%s,",p,$2}' "$HOME/.config/lan-mouse/config.toml" 2>/dev/null)"
+# per [[clients]] block, in whatever order lan-mouse wrote the fields
+echo "mousePeers=$(awk -F' = ' '/^\[\[clients\]\]/{if(p!="")printf "%s:%s,",p,h;p="";h=""} /^position/{gsub(/"/,"",$2);p=$2} /^hostname/{gsub(/"/,"",$2);h=$2} END{if(p!="")printf "%s:%s,",p,h}' "$HOME/.config/lan-mouse/config.toml" 2>/dev/null)"
+echo "mouseIps=$(awk -F' = ' '/^\[\[clients\]\]/{if(p!="")printf "%s:%s,",p,ip;p="";ip=""} /^position/{gsub(/"/,"",$2);p=$2} /^ips/{gsub(/[]["]/,"",$2);ip=$2} END{if(p!="")printf "%s:%s,",p,ip}' "$HOME/.config/lan-mouse/config.toml" 2>/dev/null)"
 if [ -f "$S/input.pid" ] && kill -0 "$(cat "$S/input.pid")" 2>/dev/null; then
   echo "inputSharing=1"
 else

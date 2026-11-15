@@ -113,22 +113,28 @@ Item {
         }
     }
 
-    // the PCs reached by moving the mouse off an edge
+    // the PCs reached by moving the mouse off an edge — on any side; drag
+    // one to another side (left, right, above, below) to move it there
     Repeater {
-        model: ["left", "right"].filter(s => !!root.mousePeers[s])
+        model: ["left", "right", "top", "bottom"].filter(s => !!root.mousePeers[s])
         delegate: Rectangle {
             id: ghost
             required property string modelData
-            readonly property real homeX: modelData === "left"
-                ? root.ox + root.minX * root.k - root.ghostW * 0.75 * root.k - 14
-                : root.ox + root.maxX * root.k + 14
-            x: homeX
-            y: root.oy + root.minY * root.k
-            width: root.ghostW * 0.75 * root.k; height: 720 * 0.75 * root.k
+            readonly property real gw: root.ghostW * 0.75 * root.k
+            readonly property real gh: 720 * 0.75 * root.k
+            readonly property real homeX: modelData === "left" ? root.ox + root.minX * root.k - gw - 14
+                : modelData === "right" ? root.ox + root.maxX * root.k + 14
+                : root.ox + (root.minX + root.maxX) / 2 * root.k - gw / 2
+            readonly property real homeY: modelData === "top" ? root.oy + root.minY * root.k - gh - 10
+                : modelData === "bottom" ? root.oy + root.maxY * root.k + 10
+                : root.oy + root.minY * root.k
+            x: homeX; y: homeY
+            width: gw; height: gh
             radius: 6
             color: Theme.alpha(Theme.text, 0.05)
             border.width: 1; border.color: Theme.muted
             Behavior on x { enabled: !gm.drag.active; NumberAnimation { duration: Theme.normal; easing.type: Theme.easeMove } }
+            Behavior on y { enabled: !gm.drag.active; NumberAnimation { duration: Theme.normal; easing.type: Theme.easeMove } }
             Column {
                 anchors.centerIn: parent; spacing: 2
                 Text {
@@ -146,12 +152,17 @@ Item {
                 id: gm
                 anchors.fill: parent
                 cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
-                drag.target: ghost; drag.axis: Drag.XAxis
+                drag.target: ghost
                 onReleased: {
-                    const centre = root.ox + (root.minX + root.maxX) / 2 * root.k
-                    const to = ghost.x + ghost.width / 2 < centre ? "left" : "right"
+                    // the side of the layout the tile was dropped nearest
+                    const cx = ghost.x + ghost.width / 2, cy = ghost.y + ghost.height / 2
+                    const l = root.ox + root.minX * root.k, r = root.ox + root.maxX * root.k
+                    const t = root.oy + root.minY * root.k, b = root.oy + root.maxY * root.k
+                    const d = { left: l - cx, right: cx - r, top: t - cy, bottom: cy - b }
+                    const to = Object.keys(d).reduce((a, k) => d[k] > d[a] ? k : a, "left")
                     if (to !== ghost.modelData) root.mouseSide(ghost.modelData, to)
                     ghost.x = Qt.binding(() => ghost.homeX)
+                    ghost.y = Qt.binding(() => ghost.homeY)
                 }
             }
         }

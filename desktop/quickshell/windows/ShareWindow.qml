@@ -677,6 +677,8 @@ OverlayWindow {
                 Text {
                     width: parent.width; wrapMode: Text.WordWrap
                     text: "Left: " + (Share.mousePeers.left || "—") + "     Right: " + (Share.mousePeers.right || "—")
+                        + (Share.mousePeers.top ? "     Above: " + Share.mousePeers.top : "")
+                        + (Share.mousePeers.bottom ? "     Below: " + Share.mousePeers.bottom : "")
                         + (Share.mouseMsg ? "     ·  " + Share.mouseMsg : "")
                     color: Theme.text2
                     font.family: Theme.font; font.pixelSize: Theme.fontSm
@@ -694,13 +696,17 @@ OverlayWindow {
                         }
                         Btn { icon: "arrow-left"; label: "On my left"; onClicked: Share.mousePair(modelData.ip, "left") }
                         Btn { icon: "arrow-right"; label: "On my right"; onClicked: Share.mousePair(modelData.ip, "right") }
+                        Btn { icon: "chevron-down"; label: "Above"; onClicked: Share.mousePair(modelData.ip, "top") }
+                        Btn { icon: "chevron-down"; label: "Below"; onClicked: Share.mousePair(modelData.ip, "bottom") }
                     }
                 }
                 Row {
                     spacing: Theme.spaceSm
-                    visible: !!(Share.mousePeers.left || Share.mousePeers.right)
+                    visible: !!(Share.mousePeers.left || Share.mousePeers.right || Share.mousePeers.top || Share.mousePeers.bottom)
                     Btn { visible: !!Share.mousePeers.left; icon: "x"; label: "Forget left"; onClicked: Share.mouseForget("left") }
                     Btn { visible: !!Share.mousePeers.right; icon: "x"; label: "Forget right"; onClicked: Share.mouseForget("right") }
+                    Btn { visible: !!Share.mousePeers.top; icon: "x"; label: "Forget above"; onClicked: Share.mouseForget("top") }
+                    Btn { visible: !!Share.mousePeers.bottom; icon: "x"; label: "Forget below"; onClicked: Share.mouseForget("bottom") }
                 }
             }
 
