@@ -121,20 +121,75 @@ it says so and offers to restart, naming which.
 
 ### "I want my other laptop to be a second screen"
 
-`Super+Shift+D`. **Extend** asks the compositor for a headless output and
-sends it over the network, so the second machine becomes a real third display
-with its own workspaces, not a mirror. Sound rides in the same stream as the
-picture, so they cannot drift apart.
+Two Praxis PCs on the same network (or one Ethernet cable between them) can
+work as one desk. Four pieces, each usable on its own, all in
+`Super+Shift+D` (the Share screen window) and Settings:
 
-A viewer needs a six-digit code the host shows on screen. It is a TLS
-pre-shared key, not a password checked after connecting — without it the
-handshake fails and the stream is never reached, and the session key comes
-from the same secret, so everything after is encrypted. Nothing to copy
-between machines.
+**1. Screen share — the other PC becomes a monitor.** Turn on *Allow screen
+share* on the PC whose screen you want to extend; on the other PC open the
+same window, press *Scan* and click it. The host builds an extra display at
+the viewer's exact resolution, refresh rate (up to 120 Hz) and scale, and the
+viewer shows it fullscreen. Drag windows onto it like any monitor.
+*Extend* adds a display; *Mirror* copies yours.
 
-Expect **15–40 ms** on a local network. Fine for a browser or a terminal on
-the far screen. Not for games. I would rather give you a number than promise
-zero.
+- Picture: full 4:4:4 colour (no smeared coloured text), HEVC on the GPU at
+  both ends, sound alongside on its own link.
+- Delay, measured with a frame counter between two laptops on a cable:
+  **42–67 ms** screen to screen. Fine for documents, browsers, code. Not for
+  games. Wi-Fi adds its own jitter; a cable is steadier.
+- Works both ways — either PC can be the host.
+
+**2. Mouse & keyboard — one set for both PCs.** In the Share screen window,
+*Mouse & keyboard*: switch on *Share this mouse and keyboard*, then next to
+the other PC press *On my left*, *On my right*, *Above* or *Below*. Move the
+pointer off that edge and it carries on on the other PC, keyboard included;
+**A + S + D + F** together brings it back. No video is involved — only the
+input crosses the network and the other PC draws its own pointer — so it is
+as smooth as a mouse plugged into it. Built on
+[lan-mouse](https://github.com/feschber/lan-mouse).
+
+While a screen share is running, this PC stops sending its pointer across
+that edge (the shared display sits there) but still accepts the other PC's
+own mouse and keyboard, so both work on the shared screen at once.
+
+**3. Shared clipboard.** Comes with mouse & keyboard sharing. Copy text, an
+image or files on one PC and paste on the other. Files arrive in
+`~/Downloads/From <PC name>/` and the clipboard there holds them, so pasting
+in a file manager copies them where you want.
+
+**4. Sound on several speakers, in sync.** Settings → Sound → *Play on
+several speakers, in sync*: tick two or more (laptop, monitor, Bluetooth) and
+press *Play together*. PipeWire holds the faster ones back to match the
+slowest. While a screen share sends sound, this PC's speakers wait for the
+viewer's so they do not echo — tune it with `praxis-share audio-delay MS`.
+
+#### Moving things around yourself
+
+- **Screens:** Settings → Display → *Arrange screens*. Drag any screen —
+  including the shared one — beside, above or below another; it snaps edge to
+  edge. The shared screen goes back to the same place next time.
+- **The mouse-shared PC:** it is the dashed tile in the same view. Drag it
+  to another side (left, right, above, below), or press the side buttons in
+  the Share screen window again. *Forget* removes it.
+- **Moved the laptops on the desk?** Just drag the tiles to match. Nothing
+  else needs changing.
+
+#### Connecting the two PCs
+
+- **Same Wi-Fi:** works on home routers and phone hotspots. Office and
+  college Wi-Fi often blocks devices from reaching each other ("client
+  isolation") — then nothing can connect, whatever the app.
+- **Ethernet cable (best):** plug one straight between the laptops. Each
+  Praxis PC tries a router first and falls back to a direct link address
+  after 8 seconds, so they find each other with no settings. A cable gives
+  the most bitrate and the steadiest delay. A plain USB-C to USB-C cable
+  does *not* network two laptops; only Thunderbolt/USB4 on both ends would.
+
+**Security, honestly:** pairing codes are switched **off** while this is
+being tuned — anyone on the same network can view a shared screen or pair
+for mouse sharing while those are on. The link is still encrypted
+(TLS-PSK). `PRAXIS_SHARE_PIN=1` brings the four-digit code back; it will be
+the default again.
 
 <p align="center"><img src="docs/screenshots/share-screen.png" width="760" alt="The Share screen window: displays drawn in perspective, with the one being sent lit up"></p>
 
@@ -263,7 +318,8 @@ The sections above are the reasons each piece exists. This is the whole list.
 | **Task manager** | `Ctrl+Shift+Esc` — CPU *and* GPU use per process, with a stop button for running AI jobs. |
 | **Tools** | Clipboard history `Super+Shift+V`, emoji `Super+.`, colour picker `Super+Shift+C`, screen recorder `Super+Shift+R`, notes `Super+N`, screenshot `Print`. |
 | **Wallpapers** | Thirteen original stills and three seamless live ones, decoded on the integrated GPU so the discrete card can idle. |
-| **Screen share** | `Super+Shift+D` — share screen with nearby Praxis PCs on local Wi-Fi with automatic discovery, 4-digit PIN pairing, sound forwarding, and zero terminal windows. |
+| **Two PCs, one desk** | `Super+Shift+D` — another Praxis PC as an extra monitor (4:4:4, ~50 ms), one mouse and keyboard across both, a shared clipboard (text, images, files), and drag-to-arrange in Settings → Display. Wi-Fi or one Ethernet cable. |
+| **Speakers** | Settings → Sound — play on several speakers at once, in sync. |
 | **Settings** | Wi-fi, bluetooth, audio, displays, dock, power, date and time, appearance, shortcuts, AI models, and a Health page — one window. |
 
 <p align="center"><img src="docs/screenshots/settings-display.png" width="760" alt="Settings, Display: refresh rate, scale, OLED colour and burn-in protection"></p>
@@ -331,8 +387,9 @@ first.
 
 **Not done:**
 
-- Keyboard and mouse crossing across machines (Deskflow) has an experimental toggle,
-  but multi-monitor coordinate synchronization is still being refined.
+- Screen share and mouse sharing run without a pairing code while they are
+  being tuned (see the second-screen section); the code comes back next.
+- Screen share delay is ~50 ms on a cable — good for work, not for games.
 - Hardware beyond this one laptop is handled by detection, not by testing.
   Brightness varies most between vendors; some HP Omen models have known
   problems.
