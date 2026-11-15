@@ -5,8 +5,34 @@
 #    praxis-audio status     show active audio sinks, sources, and volume
 #    praxis-audio unmute     unmute all channels (speakers, mic) and set volume
 #    praxis-audio reset      restart PipeWire & WirePlumber user services
+#    praxis-audio list       speakers: NAME<TAB>DESCRIPTION
+#    praxis-audio together NAME...   play on several speakers at once, in sync
+#    praxis-audio single     back to one speaker
+#
+#  "together" uses PipeWire's combine-stream with latency compensation: every
+#  speaker reports how far behind it plays (HDMI buffers more than the
+#  laptop's own speaker, Bluetooth far more) and the faster ones are held
+#  back by the difference, so they all sound at the same moment. It shows up
+#  as one output, "All selected speakers", made the default.
 # ============================================================================
 set -euo pipefail
+
+TOGETHER_CONF="$HOME/.config/pipewire/pipewire.conf.d/90-praxis-together.conf"
+TOGETHER_SINK="praxis-together"
+
+list_sinks() {
+    pactl -f json list sinks 2>/dev/null | python3 -c '
+import json, sys
+for s in json.load(sys.stdin):
+    if s["name"] != "praxis-together":
+        print(s["name"] + "\t" + s.get("description", s["name"]))'
+}
+
+restart_audio() {
+    systemctl --user restart pipewire pipewire-pulse wireplumber 2>/dev/null || true
+    local i
+    for i in $(seq 1 30); do pactl info >/dev/null 2>&1 && break; sleep 0.2; done
+}
 
 case "${1:-status}" in
     status)
@@ -31,11 +57,55 @@ case "${1:-status}" in
         "$0" unmute
         echo "PipeWire and WirePlumber restarted and unmuted."
         ;;
+    list)
+        list_sinks
+        ;;
+    together)
+        shift
+        [ $# -ge 2 ] || { echo "pick at least two speakers (praxis-audio list)" >&2; exit 1; }
+        known=$(list_sinks | cut -f1)
+        rules=""
+        for n in "$@"; do
+            grep -qxF "$n" <<<"$known" || { echo "no speaker called $n" >&2; exit 1; }
+            rules+="        { matches = [ { media.class = \"Audio/Sink\" node.name = \"$n\" } ] actions = { create-stream = { } } }"$'\n'
+        done
+        mkdir -p "${TOGETHER_CONF%/*}"
+        {
+            echo '# written by praxis-audio: one output that plays on several speakers in sync'
+            echo 'context.modules = ['
+            echo '  { name = libpipewire-module-combine-stream'
+            echo '    args = {'
+            echo '      combine.mode = sink'
+            echo "      node.name = \"$TOGETHER_SINK\""
+            echo '      node.description = "All selected speakers"'
+            echo '      # hold the faster speakers back so all of them sound at once'
+            echo '      combine.latency-compensate = true'
+            echo '      combine.props = { audio.position = [ FL FR ] }'
+            echo '      stream.props = { stream.dont-remix = true }'
+            echo '      stream.rules = ['
+            printf '%s' "$rules"
+            echo '      ]'
+            echo '    }'
+            echo '  }'
+            echo ']'
+        } > "$TOGETHER_CONF"
+        restart_audio
+        # the combined output appears a moment after PipeWire is back
+        for _ in $(seq 1 25); do pactl list short sinks | grep -q "$TOGETHER_SINK" && break; sleep 0.2; done
+        pactl set-default-sink "$TOGETHER_SINK" 2>/dev/null \
+            || { echo "PipeWire did not create the combined output" >&2; exit 1; }
+        echo "Playing on $# speakers together, in sync."
+        ;;
+    single)
+        rm -f "$TOGETHER_CONF"
+        restart_audio
+        echo "Back to one speaker."
+        ;;
     -h|--help|help)
-        echo "Usage: praxis-audio {status|unmute|reset}"
+        echo "Usage: praxis-audio {status|unmute|reset|list|together NAME...|single}"
         ;;
     *)
-        echo "Usage: praxis-audio {status|unmute|reset}"
+        echo "Usage: praxis-audio {status|unmute|reset|list|together NAME...|single}"
         exit 1
         ;;
 esac

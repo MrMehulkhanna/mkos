@@ -1114,6 +1114,44 @@ OverlayWindow {
                 SettingRow { required property var modelData; label: modelData.description || modelData.nickname || modelData.name
                     Btn { icon: Audio.sink === modelData ? "check" : "volume-high"; label: Audio.sink === modelData ? "Default" : "Use"; active: Audio.sink === modelData; iconColor: active ? Theme.onAccent : Theme.text2; onClicked: Audio.setDefaultSink(modelData) } }
             }
+            // ── several speakers at once, in sync (praxis-audio together) ──
+            H { text: "PLAY ON SEVERAL SPEAKERS, IN SYNC" }
+            Text {
+                width: parent.width; wrapMode: Text.WordWrap; bottomPadding: 6
+                text: "Tick two or more and press Play together. The faster speakers wait for the slowest, so every one sounds at the same moment."
+                color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.fontXs
+            }
+            Item {
+                id: together
+                width: parent.width; height: togetherCol.implicitHeight
+                property var picked: []
+                property bool on: Audio.sink && Audio.sink.name === "praxis-together"
+                Column {
+                    id: togetherCol; width: parent.width; spacing: 0
+                    Repeater {
+                        model: Audio.sinks.filter(n => n.name !== "praxis-together")
+                        SettingRow {
+                            required property var modelData
+                            label: modelData.description || modelData.nickname || modelData.name
+                            Toggle {
+                                checked: together.picked.indexOf(modelData.name) >= 0
+                                onToggled: v => {
+                                    const p = together.picked.filter(x => x !== modelData.name)
+                                    if (v) p.push(modelData.name)
+                                    together.picked = p
+                                }
+                            }
+                        }
+                    }
+                    Row {
+                        spacing: 8; topPadding: 6; bottomPadding: 6
+                        Btn { icon: "volume-high"; label: "Play together (" + together.picked.length + ")"
+                              active: together.picked.length >= 2; iconColor: active ? Theme.onAccent : Theme.text2
+                              onClicked: if (together.picked.length >= 2) Quickshell.execDetached(["praxis-audio", "together"].concat(together.picked)) }
+                        Btn { visible: together.on; icon: "x"; label: "Back to one speaker"; onClicked: Quickshell.execDetached(["praxis-audio", "single"]) }
+                    }
+                }
+            }
             H { text: "INPUT DEVICE" }
             Repeater {
                 model: Audio.sources
