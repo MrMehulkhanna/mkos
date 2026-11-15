@@ -527,6 +527,8 @@ m=[m for m in json.load(sys.stdin) if m["name"]==sys.argv[1]][0]; print(m["width
 start_cursor_overlay() {
     command -v quickshell >/dev/null || return 0
     local out="$1" qml="$STATE_DIR/cursor-overlay.qml"
+    local png="$STATE_DIR/pointer.png" pw=48 ph=48 phx=6 phy=2 geo
+    geo=$(praxis-share-gate pointer-png "$png" 2>/dev/null) && read -r pw ph phx phy <<<"$geo"
     cat > "$qml" <<QML
 import QtQuick
 import Quickshell
@@ -546,19 +548,16 @@ ShellRoot {
         // the picture is shown 1:1 in physical pixels; this window is laid
         // out in logical ones
         readonly property real k: 1 / (screen ? screen.devicePixelRatio : 1)
-        Canvas {
+        // the desktop's own arrow, from the icon theme, so it looks exactly
+        // like the pointer on the PC it belongs to
+        Image {
             id: ptr
             visible: false
-            width: 30; height: 42
-            onPaint: {
-                const c = getContext("2d")
-                c.reset()
-                c.beginPath()
-                c.moveTo(1, 1); c.lineTo(1, 33); c.lineTo(9, 26); c.lineTo(15, 39)
-                c.lineTo(20, 37); c.lineTo(14, 24); c.lineTo(25, 24); c.closePath()
-                c.fillStyle = "white"; c.fill()
-                c.lineWidth = 1.6; c.strokeStyle = "black"; c.stroke()
-            }
+            source: "file://$png"
+            smooth: true; mipmap: true
+            property real px: 24                       // its size on screen, from the host
+            width: px * w.k * $pw / 48; height: px * w.k * $ph / 48
+            property real hx: $phx * width / $pw; property real hy: $phy * height / $ph
         }
         Process {
             running: true
@@ -566,8 +565,9 @@ ShellRoot {
             stdout: SplitParser {
                 onRead: data => {
                     const p = data.split(" ")
-                    ptr.x = Number(p[0]) * w.k
-                    ptr.y = Number(p[1]) * w.k
+                    if (p.length > 3) ptr.px = Number(p[3])
+                    ptr.x = Number(p[0]) * w.k - ptr.hx
+                    ptr.y = Number(p[1]) * w.k - ptr.hy
                     ptr.visible = p[2] === "1"
                 }
             }

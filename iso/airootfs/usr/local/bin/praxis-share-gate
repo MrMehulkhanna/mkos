@@ -817,7 +817,10 @@ def cursor_send(peer: str, output: str, hz: int = 240) -> int:
                 _hypr(b"eval hl.config({ cursor = { invisible = %s } })" % (b"true" if inside else b"false"))
                 hidden = inside
             # in the shared screen's own pixels, which the viewer shows 1:1
-            msg = b"%d %d %d" % (round(lx * mon["scale"]), round(ly * mon["scale"]), 1 if inside else 0)
+            # last field: the pointer's size on that screen, so the viewer
+            # draws it exactly as big as this PC would
+            size = round(int(os.environ.get("XCURSOR_SIZE", "24")) * mon["scale"])
+            msg = b"%d %d %d %d" % (round(lx * mon["scale"]), round(ly * mon["scale"]), 1 if inside else 0, size)
             if msg != last:
                 out.sendto(msg, (peer, CURSOR_PORT))
                 last = msg
@@ -829,10 +832,60 @@ def cursor_send(peer: str, output: str, hz: int = 240) -> int:
             except OSError:
                 pass
         try:
-            out.sendto(b"0 0 0", (peer, CURSOR_PORT))
+            out.sendto(b"0 0 0 24", (peer, CURSOR_PORT))
         except OSError:
             pass
     return 0
+
+
+def pointer_png(dest: str, want: int = 48) -> str:
+    """The desktop's own arrow (Xcursor 'default' from the icon theme) as a
+    PNG, so the pointer drawn on the viewer looks exactly like the host's.
+    Returns 'w h xhot yhot' of the image written."""
+    import struct, zlib
+    theme = "Adwaita"
+    try:
+        for line in open("/usr/share/icons/default/index.theme"):
+            if line.startswith("Inherits="):
+                theme = line.split("=", 1)[1].split(",")[0].strip()
+    except OSError:
+        pass
+    for d in (os.path.expanduser(f"~/.icons/{theme}/cursors"), f"/usr/share/icons/{theme}/cursors",
+              "/usr/share/icons/Adwaita/cursors"):
+        for n in ("default", "left_ptr"):
+            f = os.path.join(d, n)
+            if os.path.exists(f):
+                break
+        else:
+            continue
+        break
+    data = open(f, "rb").read()
+    ntoc = struct.unpack_from("<I", data, 12)[0]
+    best = None
+    for i in range(ntoc):
+        typ, sub, pos = struct.unpack_from("<III", data, 16 + i * 12)
+        if typ != 0xfffd0002:
+            continue
+        w, h, xh, yh = struct.unpack_from("<IIII", data, pos + 16)
+        if best is None or abs(w - want) < abs(best[0] - want):
+            best = (w, h, xh, yh, pos + 36)
+    w, h, xh, yh, off = best
+    px = data[off:off + w * h * 4]                    # premultiplied ARGB, little endian
+    rows = b""
+    for y in range(h):
+        row = bytearray()
+        for x in range(w):
+            b, g, r, a = px[(y * w + x) * 4:(y * w + x) * 4 + 4]
+            if a:                                     # un-premultiply
+                r, g, b = (min(255, c * 255 // a) for c in (r, g, b))
+            row += bytes((r, g, b, a))
+        rows += b"\x00" + bytes(row)
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) \
+        + chunk(b"IDAT", zlib.compress(rows, 6)) + chunk(b"IEND", b"")
+    open(dest, "wb").write(png)
+    return f"{w} {h} {xh} {yh}"
 
 
 def cursor_recv() -> int:
@@ -842,7 +895,7 @@ def cursor_recv() -> int:
     s.bind(("0.0.0.0", CURSOR_PORT))
     while True:
         data, _ = s.recvfrom(64)
-        if re.fullmatch(rb"-?\d{1,5} -?\d{1,5} [01]", data):
+        if re.fullmatch(rb"-?\d{1,5} -?\d{1,5} [01]( \d{1,3})?", data):
             sys.stdout.write(data.decode() + "\n")
             sys.stdout.flush()
 
@@ -879,6 +932,8 @@ def main(argv: list[str]) -> int:
     cu.add_argument("--peer", required=True)
     cu.add_argument("--output", required=True)
     sub.add_parser("cursor-recv")
+    pp = sub.add_parser("pointer-png")
+    pp.add_argument("dest")
     sub.add_parser("newcode")
     sub.add_parser("scan")
     a = ap.parse_args(argv)
@@ -891,6 +946,8 @@ def main(argv: list[str]) -> int:
         return cursor_send(a.peer, a.output)
     if a.cmd == "cursor-recv":
         return cursor_recv()
+    if a.cmd == "pointer-png":
+        print(pointer_png(a.dest)); return 0
     if a.cmd == "clip-listen":
         return clip_listen(a.code)
     if a.cmd == "clip-send":
