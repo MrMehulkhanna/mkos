@@ -72,6 +72,8 @@ case "${1:-status}" in
     on)      mkdir -p "${FLAG%/*}"; touch "$FLAG"; start; ok "mouse & keyboard sharing on" ;;
     off)     rm -f "$FLAG"; stop; ok "mouse & keyboard sharing off" ;;
     start)   [ -f "$FLAG" ] && start || true ;;          # at login: only if switched on
+    pause)   stop ;;                                      # e.g. while sharing the screen; stays on
+
     restart)
         running daemon && { kill "$(cat "$STATE/daemon.pid")" 2>/dev/null || true; rm -f "$STATE/daemon.pid"; sleep 0.5; }
         [ -f "$FLAG" ] && start || true ;;

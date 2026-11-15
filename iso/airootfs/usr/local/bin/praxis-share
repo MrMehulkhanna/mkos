@@ -255,6 +255,11 @@ cmd_on_connect_stream() {
         echo "${PRAXIS_SHARE_SCALE:-1}" > "$STATE_DIR/scale"
         info "viewer screen is $PRAXIS_SHARE_RES at scale ${PRAXIS_SHARE_SCALE:-1}"
     fi
+    # The extra display and mouse sharing would both claim the same screen
+    # edge. While a viewer shows this PC's screen, the pointer already
+    # reaches that PC through the picture, so mouse sharing pauses and comes
+    # back when sharing stops.
+    command -v praxis-mouse >/dev/null && praxis-mouse pause >/dev/null 2>&1 || true
     if [ "$mode" = "extend" ]; then
         if [ -s "$MON_FILE" ] && monitors | grep -q "\"$(cat "$MON_FILE")\""; then
             mon=$(cat "$MON_FILE")
@@ -392,6 +397,11 @@ start_stream_gst() {
 m=[m for m in json.load(sys.stdin) if m["name"]==sys.argv[1]][0]; print(m["width"], m["height"])' "$mon")
     local w=${wh% *} h=${wh#* }
     local br=${SHARE_BITRATE:-30M}; local kbps=$(( ${br%M} * 1000 ))
+    # A keyframe every 2 s, not every 30 frames: at 120 fps that was four a
+    # second, each squeezed into a one-frame CBR budget, and the picture
+    # visibly broke up and rebuilt — the "bursting pixels". The VBV buffer
+    # holds 8 frames, so a keyframe can be big enough to arrive sharp; on a
+    # LAN it drains in a few milliseconds.
     setsid wf-recorder -y -D -o "$mon" -c rawvideo -m rawvideo -x bgr0 -f "$FIFO" \
         >"$STATE_DIR/capture.log" 2>&1 &
     echo $! > "$PID_FILE"
@@ -416,7 +426,8 @@ m=[m for m in json.load(sys.stdin) if m["name"]==sys.argv[1]][0]; print(m["width
         ! queue leaky=downstream max-size-buffers=1 max-size-bytes=0 max-size-time=0 \
         ! cudaupload ! cudaconvert ! "video/x-raw(memory:CUDAMemory),format=Y444" \
         ! nvh265enc preset=p1 tune=ultra-low-latency zerolatency=true bframes=0 \
-            gop-size=30 rc-mode=cbr bitrate="$kbps" \
+            gop-size=$(( fps * 2 )) rc-mode=cbr bitrate="$kbps" \
+            vbv-buffer-size=$(( kbps * 8 / fps )) spatial-aq=true \
         ! rtph265pay config-interval=-1 mtu=8192 ! rtpstreampay \
         ! tcpserversink host=127.0.0.1 port="$inner" sync=false \
         "${audio[@]}" >"$STATE_DIR/serve.log" 2>&1 &
@@ -670,6 +681,7 @@ cmd_stop() {
         hyprctl output remove "$mon" >/dev/null 2>&1 && ok "removed $mon"
     fi
     rm -f "$MON_FILE"
+    command -v praxis-mouse >/dev/null && praxis-mouse start >/dev/null 2>&1 || true
 }
 
 # Put the screens side by side in the given order, left to right, tops
