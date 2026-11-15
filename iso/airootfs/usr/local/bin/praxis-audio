@@ -17,7 +17,7 @@
 # ============================================================================
 set -euo pipefail
 
-TOGETHER_CONF="$HOME/.config/pipewire/pipewire.conf.d/90-praxis-together.conf"
+TOGETHER_CONF="$HOME/.config/praxis/audio-together.conf"
 TOGETHER_SINK="praxis-together"
 
 list_sinks() {
@@ -69,16 +69,26 @@ case "${1:-status}" in
             grep -qxF "$n" <<<"$known" || { echo "no speaker called $n" >&2; exit 1; }
             rules+="        { matches = [ { media.class = \"Audio/Sink\" node.name = \"$n\" } ] actions = { create-stream = { } } }"$'\n'
         done
+        # Its own small PipeWire process, not a drop-in for the main one:
+        # loading it into the main daemon needed a restart of the sound
+        # system, and every app already open (browser, Claude...) lost its
+        # microphone and speakers until it was restarted itself.
         mkdir -p "${TOGETHER_CONF%/*}"
+        rm -f "$HOME/.config/pipewire/pipewire.conf.d/90-praxis-together.conf"
         {
             echo '# written by praxis-audio: one output that plays on several speakers in sync'
+            echo 'context.properties = { log.level = 0 }'
+            echo 'context.spa-libs = { audio.convert.* = audioconvert/libspa-audioconvert support.* = support/libspa-support }'
             echo 'context.modules = ['
+            echo '  { name = libpipewire-module-rt args = { nice.level = -11 } flags = [ ifexists nofail ] }'
+            echo '  { name = libpipewire-module-protocol-native }'
+            echo '  { name = libpipewire-module-client-node }'
+            echo '  { name = libpipewire-module-adapter }'
             echo '  { name = libpipewire-module-combine-stream'
             echo '    args = {'
             echo '      combine.mode = sink'
             echo "      node.name = \"$TOGETHER_SINK\""
             echo '      node.description = "All selected speakers"'
-            echo '      # hold the faster speakers back so all of them sound at once'
             echo '      combine.latency-compensate = true'
             echo '      combine.props = { audio.position = [ FL FR ] }'
             echo '      stream.props = { stream.dont-remix = true }'
@@ -89,8 +99,8 @@ case "${1:-status}" in
             echo '  }'
             echo ']'
         } > "$TOGETHER_CONF"
-        restart_audio
-        # the combined output appears a moment after PipeWire is back
+        pkill -f "pipewire -c $TOGETHER_CONF" 2>/dev/null || true
+        setsid pipewire -c "$TOGETHER_CONF" >/dev/null 2>&1 &
         for _ in $(seq 1 25); do pactl list short sinks | grep -q "$TOGETHER_SINK" && break; sleep 0.2; done
         pactl set-default-sink "$TOGETHER_SINK" 2>/dev/null \
             || { echo "PipeWire did not create the combined output" >&2; exit 1; }
@@ -98,14 +108,15 @@ case "${1:-status}" in
         touch "$HOME/.config/praxis/audio-together" 2>/dev/null || { mkdir -p "$HOME/.config/praxis"; touch "$HOME/.config/praxis/audio-together"; }
         ;;
     single)
+        pkill -f "pipewire -c $TOGETHER_CONF" 2>/dev/null || true
         rm -f "$TOGETHER_CONF" "$HOME/.config/praxis/audio-together"
-        restart_audio
         echo "Back to one speaker."
         ;;
     restore)
         # at login: something (a device appearing, an app) can pick another
         # default; put the combined output back if the user chose it
-        [ -f "$HOME/.config/praxis/audio-together" ] || exit 0
+        [ -f "$HOME/.config/praxis/audio-together" ] && [ -f "$TOGETHER_CONF" ] || exit 0
+        pgrep -f "pipewire -c $TOGETHER_CONF" >/dev/null || { setsid pipewire -c "$TOGETHER_CONF" >/dev/null 2>&1 & }
         for _ in $(seq 1 50); do pactl list short sinks 2>/dev/null | grep -q "$TOGETHER_SINK" && break; sleep 0.2; done
         pactl set-default-sink "$TOGETHER_SINK" 2>/dev/null || true
         ;;
