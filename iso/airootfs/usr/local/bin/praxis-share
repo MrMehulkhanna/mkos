@@ -327,6 +327,13 @@ print(min(3, max(1, s)))' "${PRAXIS_SHARE_RES%%x*}" "${PRAXIS_SHARE_MM:-0}" 2>/d
     [[ "$r" =~ @([0-9]+) ]] && hz=${BASH_REMATCH[1]}
     [ "$hz" -gt 120 ] && hz=120; [ "$hz" -lt 30 ] && hz=60
     start_stream "$mon" "$port" "$hz"
+    # the viewer draws the pointer itself; send it where ours is
+    if [ "$mode" = extend ] && [ -n "${PRAXIS_SHARE_PEER:-}" ]; then
+        [ -f "$STATE_DIR/cursor.pid" ] && kill "$(cat "$STATE_DIR/cursor.pid")" 2>/dev/null || true
+        setsid praxis-share-gate cursor-send --peer "$PRAXIS_SHARE_PEER" --output "$mon" \
+            >"$STATE_DIR/cursor.log" 2>&1 &
+        echo $! > "$STATE_DIR/cursor.pid"
+    fi
     echo "PRAXIS-CODEC $(cat "$STATE_DIR/codec" 2>/dev/null || echo h264)"
 }
 
@@ -513,6 +520,65 @@ m=[m for m in json.load(sys.stdin) if m["name"]==sys.argv[1]][0]; print(m["width
 # Viewer for the RTP stream (see start_stream_gst). Sound comes over its own
 # link — a second gate connection to the host's next port — and plays with
 # a short buffer, separate from the picture so neither waits on the other.
+# The viewer draws the host's pointer itself (see cursor_send in
+# praxis-share-gate): a click-through overlay above the fullscreen picture,
+# moved by position updates over UDP, so it moves at this screen's own
+# refresh rate instead of with the video's frames.
+start_cursor_overlay() {
+    command -v quickshell >/dev/null || return 0
+    local out="$1" qml="$STATE_DIR/cursor-overlay.qml"
+    cat > "$qml" <<QML
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import Quickshell.Wayland
+ShellRoot {
+    PanelWindow {
+        id: w
+        screen: Quickshell.screens.find(s => s.name === "$out") || Quickshell.screens[0]
+        anchors { left: true; right: true; top: true; bottom: true }
+        exclusionMode: ExclusionMode.Ignore
+        WlrLayershell.layer: WlrLayer.Overlay
+        WlrLayershell.namespace: "praxis-cursor"
+        WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+        color: "transparent"
+        mask: Region {}
+        // the picture is shown 1:1 in physical pixels; this window is laid
+        // out in logical ones
+        readonly property real k: 1 / (screen ? screen.devicePixelRatio : 1)
+        Canvas {
+            id: ptr
+            visible: false
+            width: 30; height: 42
+            onPaint: {
+                const c = getContext("2d")
+                c.reset()
+                c.beginPath()
+                c.moveTo(1, 1); c.lineTo(1, 33); c.lineTo(9, 26); c.lineTo(15, 39)
+                c.lineTo(20, 37); c.lineTo(14, 24); c.lineTo(25, 24); c.closePath()
+                c.fillStyle = "white"; c.fill()
+                c.lineWidth = 1.6; c.strokeStyle = "black"; c.stroke()
+            }
+        }
+        Process {
+            running: true
+            command: ["praxis-share-gate", "cursor-recv"]
+            stdout: SplitParser {
+                onRead: data => {
+                    const p = data.split(" ")
+                    ptr.x = Number(p[0]) * w.k
+                    ptr.y = Number(p[1]) * w.k
+                    ptr.visible = p[2] === "1"
+                }
+            }
+        }
+    }
+}
+QML
+    setsid quickshell -p "$qml" >"$STATE_DIR/cursor-overlay.log" 2>&1 &
+    CURSOR_PID=$!
+}
+
 view_rtp() {
     # A live wallpaper behind a fullscreen picture is decoding video nobody
     # can see (~30 % CPU); show the still while watching, put it back after.
@@ -530,6 +596,7 @@ view_rtp() {
     aplay -L 2>/dev/null | grep -qx pipewire || async="$asink sync=false buffer-time=40000 latency-time=10000"
     local dec="nvh265dec max-display-delay=0"
     gst-inspect-1.0 nvh265dec >/dev/null 2>&1 || dec="avdec_h265"
+    start_cursor_overlay "${myout:-}"
     echo "$target" > "$STATE_DIR/viewer.target"
     gst-launch-1.0 -q \
         tcpclientsrc host=127.0.0.1 port="$local_port" \
@@ -553,7 +620,7 @@ view_rtp() {
     VIEW_AUDIO="$agate $!"
     echo "$VIEW_GATE $VIEW_PID $VIEW_AUDIO" > "$STATE_DIR/viewer.pids"
     WP_PAUSED=$wp_paused
-    trap 'kill ${VIEW_GATE:-} ${VIEW_PID:-} ${VIEW_AUDIO:-} 2>/dev/null || true; rm -f "$STATE_DIR/viewer.pids" "$STATE_DIR/viewer.target"; [ -n "${WP_PAUSED:-}" ] && praxis-wallpaper restore >/dev/null 2>&1' EXIT INT TERM
+    trap 'kill ${VIEW_GATE:-} ${VIEW_PID:-} ${VIEW_AUDIO:-} ${CURSOR_PID:-} 2>/dev/null || true; rm -f "$STATE_DIR/viewer.pids" "$STATE_DIR/viewer.target"; [ -n "${WP_PAUSED:-}" ] && praxis-wallpaper restore >/dev/null 2>&1' EXIT INT TERM
     wait "$VIEW_PID" || true
 }
 
@@ -784,6 +851,8 @@ cmd_stop() {
     fi
     rm -f "$MON_FILE"
     delay_local_off
+    [ -f "$STATE_DIR/cursor.pid" ] && { kill "$(cat "$STATE_DIR/cursor.pid")" 2>/dev/null || true; rm -f "$STATE_DIR/cursor.pid"; }
+    hyprctl eval 'hl.config({ cursor = { invisible = false } })' >/dev/null 2>&1 || true
     command -v praxis-mouse >/dev/null && praxis-mouse resume >/dev/null 2>&1 || true
 }
 

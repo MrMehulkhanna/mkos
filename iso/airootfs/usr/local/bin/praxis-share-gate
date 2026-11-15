@@ -768,6 +768,85 @@ def clip_send(hosts: list[str], code: str) -> int:
     return 0
 
 
+# ── local pointer for the shared screen ─────────────────────────────────
+# A pointer painted into the video moves only when a frame arrives, ~50 ms
+# behind the hand. Instead the host sends where its pointer is on the
+# shared screen (a few bytes over UDP, ~1 ms on a cable) and the viewer
+# draws it itself at its own refresh rate, so it moves like a pointer on a
+# monitor plugged into that PC. While the pointer is on the shared screen
+# the host hides its own, so the video does not carry a second, slow one.
+CURSOR_PORT = 5924
+
+
+def _hypr(cmd: bytes) -> bytes:
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "hypr", sig, ".socket.sock")
+    s = socket.socket(socket.AF_UNIX)
+    s.connect(path)
+    s.sendall(cmd)
+    out = b""
+    while True:
+        chunk = s.recv(65536)
+        if not chunk:
+            break
+        out += chunk
+    s.close()
+    return out
+
+
+def cursor_send(peer: str, output: str, hz: int = 240) -> int:
+    out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    hidden = None
+    last = None
+    mon, mon_t = None, 0.0
+    period = 1.0 / hz
+    try:
+        while True:
+            t0 = time.monotonic()
+            if t0 - mon_t > 1.0:                     # the screen's place can change
+                ms = json.loads(_hypr(b"j/monitors"))
+                mon = next((m for m in ms if m["name"] == output), None)
+                mon_t = t0
+                if mon is None:
+                    break                            # sharing stopped
+            c = json.loads(_hypr(b"j/cursorpos"))
+            lw, lh = mon["width"] / mon["scale"], mon["height"] / mon["scale"]
+            lx, ly = c["x"] - mon["x"], c["y"] - mon["y"]
+            inside = 0 <= lx < lw and 0 <= ly < lh
+            if inside != hidden:
+                _hypr(b"eval hl.config({ cursor = { invisible = %s } })" % (b"true" if inside else b"false"))
+                hidden = inside
+            # in the shared screen's own pixels, which the viewer shows 1:1
+            msg = b"%d %d %d" % (round(lx * mon["scale"]), round(ly * mon["scale"]), 1 if inside else 0)
+            if msg != last:
+                out.sendto(msg, (peer, CURSOR_PORT))
+                last = msg
+            time.sleep(max(0.0, period - (time.monotonic() - t0)))
+    finally:
+        if hidden:
+            try:
+                _hypr(b"eval hl.config({ cursor = { invisible = false } })")
+            except OSError:
+                pass
+        try:
+            out.sendto(b"0 0 0", (peer, CURSOR_PORT))
+        except OSError:
+            pass
+    return 0
+
+
+def cursor_recv() -> int:
+    """Print 'x y visible' lines for the overlay to follow."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("0.0.0.0", CURSOR_PORT))
+    while True:
+        data, _ = s.recvfrom(64)
+        if re.fullmatch(rb"-?\d{1,5} -?\d{1,5} [01]", data):
+            sys.stdout.write(data.decode() + "\n")
+            sys.stdout.flush()
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(add_help=True)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -796,6 +875,10 @@ def main(argv: list[str]) -> int:
     cs = sub.add_parser("clip-send")
     cs.add_argument("--code", required=True)
     cs.add_argument("hosts", nargs="+")
+    cu = sub.add_parser("cursor-send")
+    cu.add_argument("--peer", required=True)
+    cu.add_argument("--output", required=True)
+    sub.add_parser("cursor-recv")
     sub.add_parser("newcode")
     sub.add_parser("scan")
     a = ap.parse_args(argv)
@@ -804,6 +887,10 @@ def main(argv: list[str]) -> int:
     if a.cmd == "scan":
         print(json.dumps(scan()))
         return 0
+    if a.cmd == "cursor-send":
+        return cursor_send(a.peer, a.output)
+    if a.cmd == "cursor-recv":
+        return cursor_recv()
     if a.cmd == "clip-listen":
         return clip_listen(a.code)
     if a.cmd == "clip-send":
