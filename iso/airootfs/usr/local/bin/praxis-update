@@ -52,9 +52,21 @@ warn() { echo -e "\033[1;33m  ! $*\033[0m"; }
 # Two updates running together deadlock on pacman's database lock and sit
 # there with no error, which from a GUI looks exactly like a hung update.
 # Refuse the second one plainly instead.
-PRAXIS_UPDATE_LOCK=/tmp/praxis-update.lock
-exec 9>"$PRAXIS_UPDATE_LOCK" 2>/dev/null || true
-if command -v flock >/dev/null 2>&1 && ! flock -n 9; then
+#
+# The lock lives in /run when running as root, never in /tmp: a lock left in
+# /tmp by an earlier non-root run belongs to that user, and with the kernel's
+# fs.protected_regular root may not open it there. Every later update then
+# failed to get the lock and said "already running" while nothing was — that
+# is why updates downloaded on some PCs but never installed. And a lock we
+# cannot open is not proof another update holds it, so only a real held
+# lock stops us.
+if [ "$EUID" -eq 0 ]; then
+    PRAXIS_UPDATE_LOCK=/run/praxis-update.lock
+else
+    PRAXIS_UPDATE_LOCK="${XDG_RUNTIME_DIR:-/tmp}/praxis-update.lock"
+fi
+if exec 9>"$PRAXIS_UPDATE_LOCK" 2>/dev/null \
+   && command -v flock >/dev/null 2>&1 && ! flock -n 9; then
     echo -e "\033[1;33m  An update is already running. Wait for it to finish.\033[0m" >&2
     exit 7
 fi
