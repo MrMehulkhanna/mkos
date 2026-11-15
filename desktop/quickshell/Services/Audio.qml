@@ -58,7 +58,7 @@ Singleton {
     }
     function _bestSink() {
         // prefer external (BT/USB/headphone), fall back to speaker / first sink
-        const ext = sinks.find(n => _isExternal(n))
+        const ext = sinks.find(n => _isExternal(n) && !String(n.name || "").startsWith("praxis-"))
         if (ext) return ext
         const speaker = sinks.find(n => {
             const d = ((n.description || "") + " " + (n.nickname || "") + " " + (n.name || "")).toLowerCase()
@@ -73,6 +73,10 @@ Singleton {
 
     // Watch sinks list length — fires when a device plugs in or out
     onSinksChanged: {
+        // Leave Praxis's own outputs alone: "All selected speakers" and the
+        // in-step delay used while sharing are picked on purpose, and
+        // creating them changes this list — switching away undid them.
+        if (sink && String(sink.name || "").startsWith("praxis-")) return
         const best = _bestSink()
         if (best && best !== sink) setDefaultSink(best)
     }
