@@ -514,6 +514,12 @@ m=[m for m in json.load(sys.stdin) if m["name"]==sys.argv[1]][0]; print(m["width
 # link — a second gate connection to the host's next port — and plays with
 # a short buffer, separate from the picture so neither waits on the other.
 view_rtp() {
+    # A live wallpaper behind a fullscreen picture is decoding video nobody
+    # can see (~30 % CPU); show the still while watching, put it back after.
+    local wp_paused=""
+    if pgrep -x mpvpaper >/dev/null && command -v praxis-wallpaper >/dev/null; then
+        praxis-wallpaper suspend >/dev/null 2>&1 && wp_paused=1
+    fi
     # Sound: a small fixed playback buffer that pushes back, and a queue that
     # drops what is late, measured in BYTES (20 ms of 48 kHz stereo). These
     # buffers carry no timestamps, so a queue limited by time never counted
@@ -546,7 +552,8 @@ view_rtp() {
     ) >"$STATE_DIR/viewer-audio.log" 2>&1 &
     VIEW_AUDIO="$agate $!"
     echo "$VIEW_GATE $VIEW_PID $VIEW_AUDIO" > "$STATE_DIR/viewer.pids"
-    trap 'kill ${VIEW_GATE:-} ${VIEW_PID:-} ${VIEW_AUDIO:-} 2>/dev/null || true; rm -f "$STATE_DIR/viewer.pids" "$STATE_DIR/viewer.target"' EXIT INT TERM
+    WP_PAUSED=$wp_paused
+    trap 'kill ${VIEW_GATE:-} ${VIEW_PID:-} ${VIEW_AUDIO:-} 2>/dev/null || true; rm -f "$STATE_DIR/viewer.pids" "$STATE_DIR/viewer.target"; [ -n "${WP_PAUSED:-}" ] && praxis-wallpaper restore >/dev/null 2>&1' EXIT INT TERM
     wait "$VIEW_PID" || true
 }
 

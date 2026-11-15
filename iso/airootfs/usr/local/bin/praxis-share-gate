@@ -274,7 +274,9 @@ def psk_from(code: str) -> bytes:
 def pipe(a: socket.socket, b: socket.socket) -> None:
     try:
         while True:
-            data = a.recv(65536)
+            # 1 MB reads: at ~100 Mb/s of video, 64 KB reads meant thousands
+            # of wake-ups a second and ~30 % CPU for the relay alone
+            data = a.recv(1 << 20)
             if not data:
                 break
             b.sendall(data)
