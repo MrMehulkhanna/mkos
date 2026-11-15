@@ -494,6 +494,24 @@ OverlayWindow {
                             onSelected: v => Display.setRefresh(Display.internal.name, v)
                         }
                     }
+                    // ── scale: text, icons and windows bigger or smaller, all at
+                    // once, per screen. Goes through praxis-display, which
+                    // asks to keep or goes back by itself after 15 s.
+                    Repeater {
+                        model: Display.panels.filter(p => !String(p.name).startsWith("HEADLESS"))
+                        delegate: SettingRow {
+                            required property var modelData
+                            label: "Scale · " + (modelData.model || modelData.name)
+                            description: "Makes text, icons and windows bigger on this screen. "
+                                + Math.round(modelData.w / modelData.scale) + "×" + Math.round(modelData.h / modelData.scale) + " of space now."
+                            Segmented {
+                                options: [1, 1.25, 1.5, 1.75, 2].filter(s => modelData.h / s >= 600)
+                                    .map(s => ({ value: s, label: Math.round(s * 100) + " %" }))
+                                value: Math.round(modelData.scale * 4) / 4
+                                onSelected: v => Display.setScale(modelData.name, v)
+                            }
+                        }
+                    }
                     // ── OLED colour ───────────────────────────────────
                     // Only on a panel that is actually OLED: hasOled comes
                     // from reading ATNA out of the EDID, so a non-OLED laptop

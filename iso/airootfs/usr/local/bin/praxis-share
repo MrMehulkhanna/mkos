@@ -107,7 +107,7 @@ encoder() {
     # GPU can encode HEVC and still refuse its 4:4:4 profile.
     local e
     if ffmpeg -hide_banner -loglevel error -f lavfi -i nullsrc=s=256x144:r=30 \
-           -frames:v 3 -pix_fmt yuv444p -c:v hevc_nvenc -profile:v rext -f null - >/dev/null 2>&1; then
+           -frames:v 3 -pix_fmt bgr0 -c:v hevc_nvenc -profile:v rext -rgb_mode yuv444 -f null - >/dev/null 2>&1; then
         echo hevc_nvenc; return
     fi
     for e in h264_nvenc libx264; do
@@ -127,10 +127,12 @@ encoder_args() {
         # NVENC's tune is an enum of its own (hq/ll/ull/lossless) — it does
         # not take x264's "zerolatency", and rejects the whole encoder when
         # handed it. ull is the ultra-low-latency profile we want here.
-        h264_nvenc) echo "preset=p1 tune=ull g=30 rc=cbr b=${SHARE_BITRATE:-30M} profile=high444p colorspace=smpte170m color_primaries=bt709 color_trc=iec61966-2-1 color_range=tv" ;;
-        hevc_nvenc) echo "preset=p1 tune=ull g=30 bf=0 rc=cbr b=${SHARE_BITRATE:-30M} profile=rext colorspace=smpte170m color_primaries=bt709 color_trc=iec61966-2-1 color_range=tv" ;;
+        # rgb_mode=yuv444: NVENC converts the captured RGB to full 4:4:4
+        # itself, in TV range with the BT.601 matrix, which the tags match.
+        h264_nvenc) echo "preset=p1 tune=ull g=30 rc=cbr b=${SHARE_BITRATE:-30M} profile=high444p rgb_mode=yuv444 colorspace=smpte170m color_primaries=bt709 color_trc=iec61966-2-1 color_range=tv" ;;
+        hevc_nvenc) echo "preset=p1 tune=ull g=30 bf=0 rc=cbr b=${SHARE_BITRATE:-30M} profile=rext rgb_mode=yuv444 colorspace=smpte170m color_primaries=bt709 color_trc=iec61966-2-1 color_range=tv" ;;
         h264_vaapi) echo "g=30 b=12M" ;;
-        *)          echo "preset=ultrafast tune=zerolatency g=30 b=${SHARE_BITRATE_SW:-16M} colorspace=smpte170m color_primaries=bt709 color_trc=iec61966-2-1 color_range=tv" ;;
+        *)          echo "preset=ultrafast tune=zerolatency g=30 b=${SHARE_BITRATE_SW:-16M} colorspace=smpte170m color_primaries=bt709 color_trc=iec61966-2-1 color_range=pc" ;;
     esac
 }
 
@@ -165,7 +167,7 @@ add_headless() {
     # 1920x1080 display was really 960x540 stretched — blurry text and huge
     # windows on the far screen. Pin it to scale 1 at the requested mode.
     local res; res=$(cat "$STATE_DIR/res" 2>/dev/null || true); [ -n "$res" ] || res="$DEFAULT_RES"
-    hyprctl eval "hl.monitor({ output = \"$new\", mode = \"$res\", position = \"auto\", scale = 1 })" >/dev/null 2>&1 || true
+    hyprctl eval "hl.monitor({ output = \"$new\", mode = \"$res\", position = \"auto\", scale = $(cat "$STATE_DIR/scale" 2>/dev/null || echo 1) })" >/dev/null 2>&1 || true
     echo "$new"
 }
 
@@ -248,12 +250,13 @@ cmd_on_connect_stream() {
     # at exactly that size, so nothing is stretched on the far side
     if [ -n "${PRAXIS_SHARE_RES:-}" ]; then
         echo "$PRAXIS_SHARE_RES" > "$STATE_DIR/res"
-        info "viewer screen is $PRAXIS_SHARE_RES"
+        echo "${PRAXIS_SHARE_SCALE:-1}" > "$STATE_DIR/scale"
+        info "viewer screen is $PRAXIS_SHARE_RES at scale ${PRAXIS_SHARE_SCALE:-1}"
     fi
     if [ "$mode" = "extend" ]; then
         if [ -s "$MON_FILE" ] && monitors | grep -q "\"$(cat "$MON_FILE")\""; then
             mon=$(cat "$MON_FILE")
-            hyprctl eval "hl.monitor({ output = \"$mon\", mode = \"$(cat "$STATE_DIR/res" 2>/dev/null || echo "$DEFAULT_RES")\", position = \"auto\", scale = 1 })" >/dev/null 2>&1 || true
+            hyprctl eval "hl.monitor({ output = \"$mon\", mode = \"$(cat "$STATE_DIR/res" 2>/dev/null || echo "$DEFAULT_RES")\", position = \"auto\", scale = $(cat "$STATE_DIR/scale" 2>/dev/null || echo 1) })" >/dev/null 2>&1 || true
         else
             mon=$(add_headless)
             echo "$mon" > "$MON_FILE"
@@ -286,7 +289,12 @@ cmd_on_connect_stream() {
     if [ -f "$SERVE_PID_FILE" ]; then kill "$(cat "$SERVE_PID_FILE")" 2>/dev/null || true; fi
     local with_audio; with_audio=$(cat "$STATE_DIR/with_audio" 2>/dev/null || echo "1")
     WITH_AUDIO="$with_audio"
-    start_stream "$mon" "$port"
+    # stream at the viewer's refresh rate (sent at pairing, up to 120 Hz):
+    # a 165 Hz laptop fed 60 fps showed the cursor moving in visible steps
+    local hz=60 r; r=$(cat "$STATE_DIR/res" 2>/dev/null || true)
+    [[ "$r" =~ @([0-9]+) ]] && hz=${BASH_REMATCH[1]}
+    [ "$hz" -gt 120 ] && hz=120; [ "$hz" -lt 30 ] && hz=60
+    start_stream "$mon" "$port" "$hz"
 }
 
 start_stream() {
@@ -302,11 +310,11 @@ start_stream() {
     # only ~49 for 2880x1620. Asking for more than it can do does not drop
     # frames cleanly: they queue, and the queue is input delay. Keep full
     # colour and ask for what the chip sustains, with a little headroom
-    # (~200 Mpixel/s), never above 60.
+    # (~250 Mpixel/s: 120 fps at 1080p, ~53 at 2880x1620), never above 120.
     case "$enc" in *_nvenc)
         local res; res=$(cat "$STATE_DIR/res" 2>/dev/null || true)
         if [[ "$res" =~ ^([0-9]+)x([0-9]+) ]]; then
-            local cap=$(( 200000000 / (BASH_REMATCH[1] * BASH_REMATCH[2]) ))
+            local cap=$(( ${SHARE_PIXEL_BUDGET:-250000000} / (BASH_REMATCH[1] * BASH_REMATCH[2]) ))
             [ "$cap" -lt "$fps" ] && fps=$cap
             [ "$fps" -lt 30 ] && fps=30
         fi ;;
@@ -337,14 +345,19 @@ start_stream() {
     # from 0.905 (4:2:0, 12 Mb/s) to 0.982 (4:4:4, 30 Mb/s), PSNR 43.8 -> 52 dB.
     # The software fallback stays 4:2:0 to keep its CPU cost down.
     local -a fmtargs=()
-    case "$enc" in *_nvenc) fmtargs=(-x yuv444p) ;; esac
-    # wf-recorder's own RGB->YUV step uses swscale's fast defaults, which
-    # bleed colour across neighbouring pixels: on a test card of 1-pixel
-    # lines and small coloured text it scored 20 dB against a lossless grab,
-    # i.e. visibly soft. With accurate rounding and full-resolution chroma
-    # in and out it scores 59 dB, pixel-identical to the eye. The matrix and
-    # range here match the colorspace/color_range tags the encoder writes.
-    fmtargs+=(-F "scale=flags=accurate_rnd+full_chroma_int+full_chroma_inp:out_color_matrix=bt601:out_range=tv")
+    case "$enc" in
+        # The GPU does the RGB -> YUV 4:4:4 conversion inside NVENC
+        # (rgb_mode=yuv444): the screen goes in as captured. Doing it on the
+        # CPU first cost 1-3 cores, could not keep up at high resolution or
+        # 120 Hz, and the frames queuing behind it were 150 ms+ of input
+        # delay. The GPU path also measured better: 54 dB on the test card
+        # against 47.7 for the most accurate CPU conversion.
+        *_nvenc) fmtargs=(-x bgr0) ;;
+        # Software fallback: accurate rounding and full-resolution chroma,
+        # or swscale's fast defaults bleed colour across neighbouring pixels
+        # (20 dB -> 59 dB on 1-pixel lines and small coloured text).
+        *) fmtargs=(-F "scale=flags=accurate_rnd+full_chroma_int+full_chroma_inp:out_color_matrix=bt601:out_range=pc") ;;
+    esac
     setsid wf-recorder -y -D -o "$mon" -c "$enc" -m mpegts -r "$fps" "${fmtargs[@]}" \
         "${pargs[@]}" "${aargs[@]}" -f "$FIFO" >"$STATE_DIR/capture.log" 2>&1 &
     echo $! > "$PID_FILE"
@@ -392,6 +405,12 @@ cmd_connect() {
         vsink="autovideosink"
     fi
 
+    # Colour conversion for display on the GPU. GStreamer's CPU videoconvert
+    # maps TV-range video 2 levels dark (255 -> 253, 127 -> 125) — faded
+    # colour on the far screen; glcolorconvert comes back exact.
+    local vconv="glupload ! glcolorconvert ! video/x-raw(memory:GLMemory),format=RGBA ! gldownload ! video/x-raw,format=RGBA"
+    gst-inspect-1.0 glcolorconvert >/dev/null 2>&1 || vconv="videoconvert ! video/x-raw,format=BGRx"
+
     local asink="pulsesink"
     if ! gst-inspect-1.0 pulsesink >/dev/null 2>&1; then
         asink="autoaudiosink"
@@ -421,10 +440,15 @@ cmd_connect() {
     mkdir -p "$STATE_DIR"
     info "connecting to $host:$port"
     # this screen's real pixels and refresh, so the host builds a matching
-    # display; capped at 60 Hz, what the encoder is set up for
+    # display; capped at 120 Hz
     local myres; myres=$(monitors | python3 -c 'import json,sys
-ms=json.load(sys.stdin); m=next((m for m in ms if m.get("focused")), ms[0] if ms else None)
-if m: print("%dx%d@%d" % (m["width"], m["height"], min(60, round(m["refreshRate"]))))' 2>/dev/null || true)
+ms=[m for m in json.load(sys.stdin) if not m["name"].startswith("HEADLESS")]
+m=next((m for m in ms if m.get("focused")), ms[0] if ms else None)
+if m: print("%s %dx%d@%d s%g" % (m["name"], m["width"], m["height"], min(120, round(m["refreshRate"])), m["scale"]))' 2>/dev/null || true)
+    # open the picture on that real screen, never on a virtual one left over
+    # from sharing this PC, where it would be invisible
+    local myout="${myres%% *}"; myres="${myres#* }"
+    [ -n "$myout" ] && hyprctl dispatch "hl.dsp.focus({monitor=\"$myout\"})" >/dev/null 2>&1 || true
     setsid praxis-share-gate client --host "$host" --port "$port" \
         --listen "$local_port" --code "$code" ${myres:+--res "$myres"} >"$STATE_DIR/client.log" 2>&1 &
     local gate=$!
@@ -470,7 +494,7 @@ if m: print("%dx%d@%d" % (m["width"], m["height"], min(60, round(m["refreshRate"
         d. ! queue max-size-buffers=0 max-size-bytes=0 max-size-time=0 \
            ! decodebin3 \
            ! queue leaky=downstream max-size-buffers=1 \
-           ! videoconvert ! video/x-raw,format=BGRx ! $vsink sync=false async=false \
+           ! $vconv ! $vsink sync=false async=false \
         d. ! queue leaky=downstream max-size-buffers=0 max-size-bytes=0 max-size-time=100000000 \
            ! aacparse ! avdec_aac ! audioconvert ! audioresample ! $asink sync=false async=false &
     VIEW_PID=$!; VIEW_GATE=$gate
@@ -530,7 +554,7 @@ cmd_stop() {
     # "already serving".
     [ -f "$SERVE_PID_FILE" ] && { kill "$(cat "$SERVE_PID_FILE")" 2>/dev/null || true; }
     [ -f "$GATE_PID_FILE" ] && { kill "$(cat "$GATE_PID_FILE")" 2>/dev/null || true; }
-    rm -f "$PID_FILE" "$SERVE_PID_FILE" "$GATE_PID_FILE" "$PORT_FILE" "$CODE_FILE" "$FIFO" "$STATE_DIR/clients.json" "$STATE_DIR/mode" "$STATE_DIR/res" "$STATE_DIR/mirror_out"
+    rm -f "$PID_FILE" "$SERVE_PID_FILE" "$GATE_PID_FILE" "$PORT_FILE" "$CODE_FILE" "$FIFO" "$STATE_DIR/clients.json" "$STATE_DIR/mode" "$STATE_DIR/res" "$STATE_DIR/scale" "$STATE_DIR/mirror_out"
     input_running && info "input is still shared — praxis-share input stop"
     if [ -s "$MON_FILE" ]; then
         local mon; mon=$(cat "$MON_FILE")
