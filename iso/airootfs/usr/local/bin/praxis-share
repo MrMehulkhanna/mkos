@@ -171,6 +171,10 @@ add_headless() {
     local res; res=$(cat "$STATE_DIR/res" 2>/dev/null || true); [ -n "$res" ] || res="$DEFAULT_RES"
     hyprctl eval "hl.monitor({ output = \"$new\", mode = \"$res\", position = \"auto\", scale = $(cat "$STATE_DIR/scale" 2>/dev/null || echo 1) })" >/dev/null 2>&1 || true
     place_shared "$new" >/dev/null 2>&1 || true
+    # a live wallpaper drawn on every screen would cover this one too and
+    # keep its picture changing every frame; re-apply it on real screens only
+    pgrep -x mpvpaper >/dev/null && command -v praxis-wallpaper >/dev/null \
+        && { praxis-wallpaper restore --force >/dev/null 2>&1 & }
     echo "$new"
 }
 
@@ -471,6 +475,8 @@ m=[m for m in json.load(sys.stdin) if m["name"]==sys.argv[1]][0]; print(m["width
         while :; do
             wf-recorder -y -D -o "$2" -c rawvideo -m rawvideo -x bgr0 -f "$1" & c=$!
             wait $c
+            # the screen is gone (sharing stopped): stop, do not spin forever
+            hyprctl -j monitors 2>/dev/null | grep -q "\"$2\"" || exit 0
             sleep 0.2
         done' capture "$FIFO" "$mon" >"$STATE_DIR/capture.log" 2>&1 &
     echo $! > "$PID_FILE"
@@ -747,6 +753,16 @@ cmd_stop() {
     [ -s "$MON_FILE" ] && cmd_bring_back >/dev/null 2>&1 || true
     local pid; pid=$(serving_pid || true)
     if [ -n "$pid" ]; then kill -INT "$pid" 2>/dev/null || true; ok "stopped capturing"; else info "not serving"; fi
+    # The capture runs as its own process group (a restart loop around
+    # wf-recorder). Signalling only the loop left wf-recorder behind, still
+    # capturing — and an old one kept spinning on a screen that no longer
+    # existed, eating CPU. End the whole group, forcefully if it lingers.
+    if [ -f "$PID_FILE" ]; then
+        local g; g=$(cat "$PID_FILE")
+        kill -TERM -- "-$g" 2>/dev/null || true
+        sleep 0.3
+        kill -KILL -- "-$g" 2>/dev/null || true
+    fi
     # "|| true" on every kill: under set -e, killing a process that already
     # exited returns 1 and aborted stop on this line — so the gate below it
     # was never killed, kept the old PIN, and every later start said
@@ -1016,8 +1032,14 @@ case "${1:-}" in
         fi
         ok "this PC's speakers wait $2 ms for the viewer's" ;;
     restore-layout)
-        # after a config reload Hyprland puts screens back where the config
-        # says; put them back where the user arranged them
+        # After a config reload (which also happens whenever a display
+        # setting is saved) Hyprland puts screens back where the config says
+        # and resets the shared screen to its defaults, 60 Hz at 200 %. Put
+        # the shared screen's mode and scale back first, then the layout.
+        shared=$(cat "$MON_FILE" 2>/dev/null || true)
+        if [ -n "$shared" ] && monitors | grep -q "\"$shared\""; then
+            hyprctl eval "hl.monitor({ output = \"$shared\", mode = \"$(cat "$STATE_DIR/res" 2>/dev/null || echo "$DEFAULT_RES")\", position = \"auto\", scale = $(cat "$STATE_DIR/scale" 2>/dev/null || echo 1) })" >/dev/null 2>&1 || true
+        fi
         [ -s "$ORDER_FILE.pos" ] || exit 0
         args=(); shared=$(cat "$MON_FILE" 2>/dev/null || true)
         while read -r kv; do

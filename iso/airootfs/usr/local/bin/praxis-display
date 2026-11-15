@@ -155,51 +155,53 @@ case "${1:-status}" in
         hyprctl -j monitors all | jq -r '.[] | "\(.name)  \(.description)\n  now: \(.width)x\(.height)@\(.refreshRate * 100 | round / 100)  scale \(.scale)\n  modes: \(.availableModes | join(" "))"'
         ;;
     project)
+        # Every screen other than the built-in one: a monitor, and the
+        # shared screen another PC is showing. Each one keeps the mode it
+        # had (a monitor set to 120 Hz is not pushed back to its "preferred"
+        # 200 Hz), and Extend puts back the layout arranged in Settings.
+        # Before, only the first extra screen was handled and Extend always
+        # lined things up to the right with preferred modes.
         mode=${2:-extend}
         all_mons=$(hyprctl -j monitors all 2>/dev/null || echo "[]")
-        int=$(echo "$all_mons" | jq -r '.[] | select(.name | startswith("eDP")) | .name' | head -1)
-        [ -n "$int" ] || int=$(echo "$all_mons" | jq -r '.[0].name // empty')
-
-        ext=$(echo "$all_mons" | jq -r --arg im "$int" '.[] | select(.name != $im) | .name' | head -1)
-        if [ -z "$ext" ]; then
-            for s in /sys/class/drm/card*-*/status; do
-                [ -f "$s" ] || continue
-                if [ "$(cat "$s" 2>/dev/null)" = "connected" ]; then
-                    c=$(basename "$(dirname "$s")" | sed 's/^card[0-9]*-//')
-                    if [[ "$c" != eDP* ]]; then
-                        ext="$c"
-                        break
-                    fi
-                fi
-            done
-        fi
-
-        if [ -z "$ext" ]; then
+        int=$(jq -r '.[] | select(.name | startswith("eDP")) | .name' <<<"$all_mons" | head -1)
+        [ -n "$int" ] || int=$(jq -r '.[0].name // empty' <<<"$all_mons")
+        mapfile -t exts < <(jq -r --arg im "$int" '.[] | select(.name != $im) | .name' <<<"$all_mons")
+        if [ ${#exts[@]} -eq 0 ]; then
             command -v notify-send >/dev/null && notify-send -a Praxis -i video-display "No external monitor detected" "Connect a display via HDMI or DisplayPort to project."
             echo "praxis-display: no external display detected" >&2
             exit 1
         fi
-
-        int_scale=$(echo "$all_mons" | jq -r --arg im "$int" '.[] | select(.name == $im) | .scale' | head -1)
-        [ -n "$int_scale" ] && [ "$int_scale" != "null" ] || int_scale="auto"
-        int_mode=$(echo "$all_mons" | jq -r --arg im "$int" '.[] | select(.name == $im) | "\(.width)x\(.height)@\(.refreshRate * 100 | round / 100)"' | head -1)
-        [ -n "$int_mode" ] && [ "$int_mode" != "null" ] || int_mode="preferred"
-
-        case "$mode" in
-            pc)
-                hyprctl eval "hl.monitor({ output = \"$int\", disabled = false, mode = \"$int_mode\", position = \"0x0\", scale = $int_scale, mirror = \"\" }) hl.monitor({ output = \"$ext\", disabled = true })"
-                ;;
-            second)
-                hyprctl eval "hl.monitor({ output = \"$int\", disabled = true }) hl.monitor({ output = \"$ext\", disabled = false, mode = \"preferred\", position = \"0x0\", scale = 1, mirror = \"\" })"
-                ;;
-            duplicate)
-                hyprctl eval "hl.monitor({ output = \"$int\", disabled = false, mode = \"$int_mode\", position = \"0x0\", scale = $int_scale, mirror = \"\" }) hl.monitor({ output = \"$ext\", disabled = false, mode = \"preferred\", position = \"0x0\", mirror = \"$int\", scale = 1 })"
-                ;;
-            extend|*)
-                hyprctl eval "hl.monitor({ output = \"$int\", disabled = false, mode = \"$int_mode\", position = \"0x0\", scale = $int_scale, mirror = \"\" }) hl.monitor({ output = \"$ext\", disabled = false, mode = \"preferred\", position = \"auto-right\", scale = 1, mirror = \"\" })"
-                ;;
-        esac
-        echo "projected to $mode (internal: $int, external: $ext)"
+        MODES="${XDG_CACHE_HOME:-$HOME/.cache}/praxis-display/modes"
+        mkdir -p "${MODES%/*}"; touch "$MODES"
+        # remember each enabled screen's mode and scale before changing anything
+        jq -r '.[] | select(.disabled != true) | "\(.name) \(.width)x\(.height)@\(.refreshRate * 100 | round / 100) \(.scale)"' <<<"$all_mons" |
+        while read -r n m sc; do
+            grep -v "^$n " "$MODES" > "$MODES.tmp" 2>/dev/null; echo "$n $m $sc" >> "$MODES.tmp"; mv "$MODES.tmp" "$MODES"
+        done
+        mode_of()  { awk -v n="$1" '$1==n{print $2}' "$MODES" | tail -1; }
+        scale_of() { awk -v n="$1" '$1==n{print $3}' "$MODES" | tail -1; }
+        int_mode=$(mode_of "$int"); [ -n "$int_mode" ] || int_mode=preferred
+        int_scale=$(scale_of "$int"); [ -n "$int_scale" ] || int_scale=auto
+        lua="hl.monitor({ output = \"$int\", disabled = false, mode = \"$int_mode\", position = \"0x0\", scale = $int_scale, mirror = \"\" })"
+        x=$(awk "BEGIN{print int(${int_mode%%x*} / ($int_scale == \"auto\" ? 1 : $int_scale))}" 2>/dev/null || echo 1920)
+        for e in "${exts[@]}"; do
+            em=$(mode_of "$e"); [ -n "$em" ] || em=preferred
+            es=$(scale_of "$e"); [ -n "$es" ] || es=1
+            case "$mode" in
+                pc)        [[ "$e" == HEADLESS-* ]] && continue   # sharing stays up
+                           lua+=" hl.monitor({ output = \"$e\", disabled = true })" ;;
+                duplicate) lua+=" hl.monitor({ output = \"$e\", disabled = false, mode = \"$em\", position = \"0x0\", scale = $es, mirror = \"$int\" })" ;;
+                *)         lua+=" hl.monitor({ output = \"$e\", disabled = false, mode = \"$em\", position = \"${x}x0\", scale = $es, mirror = \"\" })"
+                           x=$(( x + ${em%%x*} )) ;;
+            esac
+        done
+        [ "$mode" = second ] && lua+=" hl.monitor({ output = \"$int\", disabled = true })"
+        hyprctl eval "$lua" >/dev/null
+        # Extend: the arrangement from Settings > Display, if there is one
+        if [ "$mode" = extend ] && command -v praxis-share >/dev/null; then
+            sleep 0.5; praxis-share restore-layout >/dev/null 2>&1 || true
+        fi
+        echo "projected to $mode (internal: $int, others: ${exts[*]})"
         ;;
     -h|--help|help) sed -n '3,16p' "$0" | sed 's/^# \?//' ;;
     *) die "unknown command $1 (praxis-display help)" ;;

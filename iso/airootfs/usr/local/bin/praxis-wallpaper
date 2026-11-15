@@ -132,7 +132,18 @@ show_live() {    # <video> [force]
     pkill -x hyprpaper 2>/dev/null
     # Ensure any running mpvpaper instances are stopped first to prevent duplicate decoders
     stop_procs -x mpvpaper
-    setsid -f "${MPV_ENV[@]}" mpvpaper -p -o "$MPV_OPTS" ALL "$1" >/dev/null 2>&1
+    # Real screens only. A screen shared to another PC (HEADLESS-n) got the
+    # moving wallpaper too, so its picture changed every frame and the
+    # capture and encoder never rested (~25 % CPU for a background nobody
+    # needs to see move). With no shared screen this is the same as ALL.
+    local outs
+    outs=$(hyprctl -j monitors 2>/dev/null | python3 -c 'import json,sys
+print(" ".join(m["name"] for m in json.load(sys.stdin) if not m["name"].startswith("HEADLESS")))' 2>/dev/null)
+    if [ -z "$outs" ] || ! hyprctl -j monitors 2>/dev/null | grep -q '"HEADLESS-'; then
+        setsid -f "${MPV_ENV[@]}" mpvpaper -p -o "$MPV_OPTS" ALL "$1" >/dev/null 2>&1
+    else
+        for o in $outs; do setsid -f "${MPV_ENV[@]}" mpvpaper -p -o "$MPV_OPTS" "$o" "$1" >/dev/null 2>&1; done
+    fi
     return 0
 }
 
