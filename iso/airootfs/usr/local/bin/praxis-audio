@@ -120,6 +120,12 @@ for s in json.load(sys.stdin):
         for _ in $(seq 1 25); do pactl list short sinks | grep -q "$TOGETHER_SINK" && break; sleep 0.2; done
         pactl set-default-sink "$TOGETHER_SINK" 2>/dev/null \
             || { echo "PipeWire did not create the combined output" >&2; exit 1; }
+        # each speaker at full, so the one volume slider (the combined output)
+        # sets the loudness; otherwise a speaker left at 40 % capped it there
+        for n in "$@"; do
+            pactl set-sink-volume "$n" 100% 2>/dev/null || true
+            pactl set-sink-mute "$n" 0 2>/dev/null || true
+        done
         # if a screen share is sending sound, its in-step delay fed the old
         # combined output; hook it onto the new one
         if [ -f "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/praxis-share/delay.pid" ] && command -v praxis-share >/dev/null; then
