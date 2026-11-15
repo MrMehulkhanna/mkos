@@ -425,6 +425,30 @@ OverlayWindow {
                 }
             }
 
+            // ── arrange: drag the screens to match your desk ──
+            Card {
+                height: arrangeCol.implicitHeight + 24
+                Column {
+                    id: arrangeCol
+                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
+                    spacing: 4
+                    Text { text: "Arrange screens"; color: Theme.text; font.family: Theme.font; font.pixelSize: Theme.fontMd; font.weight: Font.DemiBold }
+                    Text {
+                        width: parent.width; wrapMode: Text.WordWrap
+                        text: "Drag a screen to where it sits on your desk — beside, above or below another. The pointer crosses where they touch. A PC sharing your mouse and keyboard shows dashed: drag it to the other side to move it."
+                        color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.fontXs
+                    }
+                    ScreenArrange {
+                        width: parent.width; height: 220
+                        screens: Share.screens
+                        mousePeers: Share.mousePeers
+                        onPlaced: positions => Share.place(positions)
+                        onMouseSide: (from, to) => Share.mouseMove(from, to)
+                    }
+                }
+                Component.onCompleted: Share.refreshScreens()
+            }
+
             // ── OLED / panel care ──
             Card {
                 visible: !!Display.internal

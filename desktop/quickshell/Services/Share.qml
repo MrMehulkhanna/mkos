@@ -109,6 +109,7 @@ fi
 M="$XDG_RUNTIME_DIR/praxis-mouse"
 if [ -f "$M/daemon.pid" ] && kill -0 "$(cat "$M/daemon.pid")" 2>/dev/null; then echo "mouseOn=1"; else echo "mouseOn=0"; fi
 echo "mousePeers=$(awk -F' = ' '/^position/{gsub(/"/,"",$2);p=$2} /^hostname/{gsub(/"/,"",$2);printf "%s:%s,",p,$2}' "$HOME/.config/lan-mouse/config.toml" 2>/dev/null)"
+echo "mouseIps=$(awk -F' = ' '/^position/{gsub(/"/,"",$2);p=$2} /^ips/{gsub(/[]["]/,"",$2);printf "%s:%s,",p,$2}' "$HOME/.config/lan-mouse/config.toml" 2>/dev/null)"
 if [ -f "$S/input.pid" ] && kill -0 "$(cat "$S/input.pid")" 2>/dev/null; then
   echo "inputSharing=1"
 else
@@ -146,6 +147,12 @@ fi
                     if (j > 0) peers[e.slice(0, j)] = e.slice(j + 1)
                 }
                 root.mousePeers = peers
+                const ips = {}
+                for (const e of (kv.mouseIps || "").split(",")) {
+                    const j = e.indexOf(":")
+                    if (j > 0) ips[e.slice(0, j)] = e.slice(j + 1).split(" ")[0]
+                }
+                root.mouseIps = ips
             }
         }
     }
@@ -209,12 +216,55 @@ fi
         root.viewing = false
         soon.start()
     }
+    // ── screen arrangement: real positions, left to right ─────────────────
+    property var screens: []               // [{name, model, x, y, w, h}] in logical px
+    function refreshScreens() { if (!screensProc.running) screensProc.running = true }
+    function arrange(order) {
+        Quickshell.execDetached(["praxis-share", "arrange"].concat(order))
+        arrangeSoon.start()
+    }
+    function place(positions) {
+        Quickshell.execDetached(["praxis-share", "place"].concat(positions))
+        arrangeSoon.start()
+    }
+    Timer { id: arrangeSoon; interval: 600; onTriggered: root.refreshScreens() }
+    Process {
+        id: screensProc
+        command: ["hyprctl", "-j", "monitors"]
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    root.screens = JSON.parse(this.text).map(m => ({
+                        name: m.name, model: m.model || m.name,
+                        x: m.x, y: m.y,
+                        w: Math.round(m.width / m.scale), h: Math.round(m.height / m.scale)
+                    })).sort((a, b) => a.x - b.x)
+                } catch (e) {}
+            }
+        }
+    }
+    Connections {
+        target: Hyprland
+        function onRawEvent(ev) {
+            if (ev.name === "monitoradded" || ev.name === "monitorremoved" || ev.name === "monitoraddedv2"
+                || ev.name === "monitorremovedv2" || ev.name === "configreloaded") root.refreshScreens()
+        }
+    }
+
     // ── one mouse & keyboard across PCs (praxis-mouse / lan-mouse) ────────
     // Only input crosses the network and the other PC draws its own pointer,
     // so it is as smooth as a mouse plugged into that PC.
     property bool mouseOn:    false
     property var  mousePeers: ({})         // {left: "omen", right: "mk"}
     property string mouseMsg: ""
+    property var  mouseIps:   ({})         // {left: "169.254.189.94"}
+    // move a paired PC to the other side: forget it there, pair it here
+    function mouseMove(from, to) {
+        const ip = root.mouseIps[from]
+        if (!ip) return
+        Quickshell.execDetached(["praxis-mouse", "forget", from])
+        root.mousePair(ip, to)
+    }
     function mouseSet(on) {
         Quickshell.execDetached(["praxis-mouse", on ? "on" : "off"])
         root.mouseOn = on; soon.start()

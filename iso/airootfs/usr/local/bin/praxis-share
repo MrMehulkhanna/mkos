@@ -168,6 +168,7 @@ add_headless() {
     # windows on the far screen. Pin it to scale 1 at the requested mode.
     local res; res=$(cat "$STATE_DIR/res" 2>/dev/null || true); [ -n "$res" ] || res="$DEFAULT_RES"
     hyprctl eval "hl.monitor({ output = \"$new\", mode = \"$res\", position = \"auto\", scale = $(cat "$STATE_DIR/scale" 2>/dev/null || echo 1) })" >/dev/null 2>&1 || true
+    place_shared "$new" >/dev/null 2>&1 || true
     echo "$new"
 }
 
@@ -563,6 +564,86 @@ cmd_stop() {
     rm -f "$MON_FILE"
 }
 
+# Put the screens side by side in the given order, left to right, tops
+# aligned — what the Arrange strip in the Share window sends after a drag.
+# The order is remembered so the extra display goes back to its place the
+# next time a viewer connects ("SHARED" stands for it while it does not
+# exist yet).
+ORDER_FILE="$HOME/.config/praxis/screen-order"
+cmd_arrange() {
+    [ $# -ge 1 ] || die "usage: praxis-share arrange OUTPUT..."
+    mkdir -p "${ORDER_FILE%/*}"
+    local -a order=("$@")
+    # remember the shared screen by role, not by its HEADLESS-n name
+    local saved=() n mon; mon=$(cat "$MON_FILE" 2>/dev/null || true)
+    for n in "${order[@]}"; do [ "$n" = "$mon" ] || [[ "$n" == HEADLESS-* ]] && saved+=("SHARED") || saved+=("$n"); done
+    printf '%s\n' "${saved[@]}" > "$ORDER_FILE"; rm -f "$ORDER_FILE.pos"
+    apply_order "${order[@]}"
+}
+apply_order() {
+    monitors | python3 -c '
+import json, sys, subprocess
+order = sys.argv[1:]
+ms = {m["name"]: m for m in json.load(sys.stdin)}
+x = 0
+for n in order:
+    m = ms.get(n)
+    if not m:
+        continue
+    mode = "%dx%d@%.3f" % (m["width"], m["height"], m["refreshRate"])
+    lua = "hl.monitor({ output = \"%s\", mode = \"%s\", position = \"%dx0\", scale = %g })" % (n, mode, x, m["scale"])
+    subprocess.run(["hyprctl", "eval", lua], stdout=subprocess.DEVNULL)
+    x += round(m["width"] / m["scale"])
+' "$@"
+}
+# praxis-share place NAME=X,Y ... — exact positions in logical pixels, from
+# the drag-to-arrange view. Remembered like arrange, with the extra display
+# saved as SHARED so it goes back there next time.
+cmd_place() {
+    [ $# -ge 1 ] || die "usage: praxis-share place OUTPUT=X,Y ..."
+    mkdir -p "${ORDER_FILE%/*}"
+    local mon; mon=$(cat "$MON_FILE" 2>/dev/null || true)
+    local kv n; : > "$ORDER_FILE.pos"
+    for kv in "$@"; do
+        n=${kv%%=*}
+        { [ "$n" = "$mon" ] || [[ "$n" == HEADLESS-* ]]; } && n=SHARED
+        echo "$n=${kv#*=}" >> "$ORDER_FILE.pos"
+    done
+    rm -f "$ORDER_FILE"
+    apply_place "$@"
+}
+apply_place() {
+    monitors | python3 -c '
+import json, sys, subprocess
+ms = {m["name"]: m for m in json.load(sys.stdin)}
+for kv in sys.argv[1:]:
+    n, xy = kv.split("=", 1)
+    x, y = (int(float(v)) for v in xy.split(","))
+    m = ms.get(n)
+    if not m:
+        continue
+    mode = "%dx%d@%.3f" % (m["width"], m["height"], m["refreshRate"])
+    lua = "hl.monitor({ output = \"%s\", mode = \"%s\", position = \"%dx%d\", scale = %g })" % (n, mode, x, y, m["scale"])
+    subprocess.run(["hyprctl", "eval", lua], stdout=subprocess.DEVNULL)
+' "$@"
+}
+# place a just-created extra display where the user last put it
+place_shared() {
+    local new="$1" n order=()
+    if [ -s "$ORDER_FILE.pos" ]; then
+        local -a args=(); local kv
+        while read -r kv; do [ "${kv%%=*}" = SHARED ] && args+=("$new=${kv#*=}") || args+=("$kv"); done < "$ORDER_FILE.pos"
+        apply_place "${args[@]}"; return 0
+    fi
+    [ -s "$ORDER_FILE" ] || return 0
+    while read -r n; do [ "$n" = SHARED ] && order+=("$new") || order+=("$n"); done < "$ORDER_FILE"
+    # screens plugged in since then go on the right
+    for n in $(monitors | python3 -c 'import json,sys;print(" ".join(m["name"] for m in json.load(sys.stdin)))'); do
+        [[ " ${order[*]} " == *" $n "* ]] || order+=("$n")
+    done
+    apply_order "${order[@]}"
+}
+
 cmd_status() {
     local pid; pid=$(serving_pid || true)
     if [ -n "$pid" ]; then
@@ -685,6 +766,8 @@ case "${1:-}" in
     on-connect-stream) cmd_on_connect_stream ;;
     stop)    cmd_stop ;;
     status)  cmd_status ;;
+    arrange) shift; cmd_arrange "$@" ;;
+    place)   shift; cmd_place "$@" ;;
     scan)    shift; praxis-share-gate scan "$@" ;;
     doctor)  doctor ;;
     ""|-h|--help|help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' ;;
