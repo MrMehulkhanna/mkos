@@ -252,7 +252,26 @@ cmd_on_connect_stream() {
     # at exactly that size, so nothing is stretched on the far side
     if [ -n "${PRAXIS_SHARE_RES:-}" ]; then
         echo "$PRAXIS_SHARE_RES" > "$STATE_DIR/res"
-        echo "${PRAXIS_SHARE_SCALE:-1}" > "$STATE_DIR/scale"
+        # The user's own choice for the shared screen wins. Otherwise match
+        # sizes: from the viewer's physical width, pick the scale that makes
+        # text, windows and the cursor on it the same size in millimetres as
+        # on this PC's own screen (its built-in panel, else the first one).
+        # Copying the viewer's own scale did not: a 15" 1080p panel at 100 %
+        # sat next to a sharp laptop at 200 % with everything a different size.
+        if [ -s "$HOME/.config/praxis/share-scale" ]; then
+            cat "$HOME/.config/praxis/share-scale" > "$STATE_DIR/scale"
+        else
+            match=$(monitors | python3 -c '
+import json, sys
+w, mm = int(sys.argv[1]), int(sys.argv[2])
+ms = [m for m in json.load(sys.stdin) if not m["name"].startswith("HEADLESS") and m.get("physicalWidth")]
+ref = next((m for m in ms if m["name"].startswith("eDP")), ms[0] if ms else None)
+if not ref or mm <= 0: sys.exit(1)
+per_mm = (ref["width"] / ref["scale"]) / ref["physicalWidth"]
+s = round((w / mm) / per_mm * 4) / 4
+print(min(3, max(1, s)))' "${PRAXIS_SHARE_RES%%x*}" "${PRAXIS_SHARE_MM:-0}" 2>/dev/null) \
+                && echo "$match" > "$STATE_DIR/scale" || echo "${PRAXIS_SHARE_SCALE:-1}" > "$STATE_DIR/scale"
+        fi
         info "viewer screen is $PRAXIS_SHARE_RES at scale ${PRAXIS_SHARE_SCALE:-1}"
     fi
     # The extra display and mouse sharing would both claim the same screen
@@ -390,13 +409,14 @@ start_stream() {
 # through a delay of the same length — a PipeWire loopback that becomes the
 # default output — so every speaker sounds at once. The far PC is sent the
 # sound before the delay (the loopback's monitor), so it is not delayed
-# twice. Length: ~/.config/praxis/share-audio-delay-ms (default 80).
+# twice. Length: ~/.config/praxis/share-audio-delay-ms (default 60, the
+# measured length of the far side's sound path on a cable).
 DELAY_PID_FILE="$STATE_DIR/delay.pid"
 delay_local_on() {
     command -v pw-loopback >/dev/null || return 0
     [ -f "$DELAY_PID_FILE" ] && kill -0 "$(cat "$DELAY_PID_FILE")" 2>/dev/null && return 0
     local ms orig
-    ms=$(cat "$HOME/.config/praxis/share-audio-delay-ms" 2>/dev/null || echo 80)
+    ms=$(cat "$HOME/.config/praxis/share-audio-delay-ms" 2>/dev/null || echo 60)
     orig=$(pactl get-default-sink 2>/dev/null)
     [ -n "$orig" ] && [ "$orig" != praxis-delayed ] || return 0
     echo "$orig" > "$STATE_DIR/delay.orig"
@@ -486,6 +506,14 @@ m=[m for m in json.load(sys.stdin) if m["name"]==sys.argv[1]][0]; print(m["width
 # link — a second gate connection to the host's next port — and plays with
 # a short buffer, separate from the picture so neither waits on the other.
 view_rtp() {
+    # Sound: a small fixed playback buffer that pushes back, and a queue that
+    # drops what is late, measured in BYTES (20 ms of 48 kHz stereo). These
+    # buffers carry no timestamps, so a queue limited by time never counted
+    # as full and never dropped anything; with a sink that takes everything
+    # (pulsesink, unsynced) the Omen ended up playing 0.8-1.2 s behind. Now
+    # the whole path measures ~60 ms, which the host's in-step delay matches.
+    local async="alsasink device=pipewire buffer-time=40000 latency-time=10000 sync=false"
+    aplay -L 2>/dev/null | grep -qx pipewire || async="$asink sync=false buffer-time=40000 latency-time=10000"
     local dec="nvh265dec max-display-delay=0"
     gst-inspect-1.0 nvh265dec >/dev/null 2>&1 || dec="avdec_h265"
     echo "$target" > "$STATE_DIR/viewer.target"
@@ -505,7 +533,8 @@ view_rtp() {
         ! "application/x-rtp-stream,media=audio,clock-rate=48000,encoding-name=L16,channels=2" ! rtpstreamdepay \
         ! "application/x-rtp,media=audio,clock-rate=48000,encoding-name=L16,channels=2" \
         ! rtpL16depay ! audioconvert ! audioresample \
-        ! queue leaky=downstream max-size-time=60000000 ! $asink sync=false buffer-time=40000 latency-time=10000
+        ! queue leaky=downstream max-size-buffers=0 max-size-bytes=3840 max-size-time=0 \
+        ! $async
     ) >"$STATE_DIR/viewer-audio.log" 2>&1 &
     VIEW_AUDIO="$agate $!"
     echo "$VIEW_GATE $VIEW_PID $VIEW_AUDIO" > "$STATE_DIR/viewer.pids"
@@ -586,12 +615,12 @@ cmd_connect() {
     local myres; myres=$(monitors | python3 -c 'import json,sys
 ms=[m for m in json.load(sys.stdin) if not m["name"].startswith("HEADLESS")]
 m=next((m for m in ms if m.get("focused")), ms[0] if ms else None)
-if m: print("%s %dx%d@%d s%g" % (m["name"], m["width"], m["height"], min(120, round(m["refreshRate"])), m["scale"]))' 2>/dev/null || true)
+if m: print("%s %dx%d@%d s%g m%d" % (m["name"], m["width"], m["height"], min(120, round(m["refreshRate"])), m["scale"], m.get("physicalWidth") or 0))' 2>/dev/null || true)
     # open the picture on that real screen, never on a virtual one left over
     # from sharing this PC, where it would be invisible
     local myout="${myres%% *}"; myres="${myres#* }"
     # tests: show the picture on a given output instead
-    [ -n "${PRAXIS_SHARE_VIEW_ON:-}" ] && { myout=$PRAXIS_SHARE_VIEW_ON; myres="1920x1080@120 s1"; }
+    [ -n "${PRAXIS_SHARE_VIEW_ON:-}" ] && { myout=$PRAXIS_SHARE_VIEW_ON; myres="1920x1080@120 s1 m0"; }
     [ -n "$myout" ] && hyprctl dispatch "hl.dsp.focus({monitor=\"$myout\"})" >/dev/null 2>&1 || true
     setsid praxis-share-gate client --host "$host" --port "$port" \
         --listen "$local_port" --code "$code" ${myres:+--res "$myres"} >"$STATE_DIR/client.log" 2>&1 &
@@ -953,6 +982,19 @@ case "${1:-}" in
     status)  cmd_status ;;
     arrange) shift; cmd_arrange "$@" ;;
     place)   shift; cmd_place "$@" ;;
+    scale)
+        # praxis-share scale 1|1.25|1.5|1.75|2 — text and windows on the shared
+        # screen bigger or smaller; remembered, applied at once if sharing
+        [[ "${2:-}" =~ ^(1|1\.25|1\.5|1\.75|2)$ ]] || die "usage: praxis-share scale 1|1.25|1.5|1.75|2"
+        mkdir -p "$HOME/.config/praxis"; echo "$2" > "$HOME/.config/praxis/share-scale"
+        echo "$2" > "$STATE_DIR/scale" 2>/dev/null || true
+        mon=$(cat "$MON_FILE" 2>/dev/null || true)
+        if [ -n "$mon" ]; then
+            res=$(cat "$STATE_DIR/res" 2>/dev/null || echo "$DEFAULT_RES")
+            hyprctl eval "hl.monitor({ output = \"$mon\", mode = \"$res\", position = \"auto\", scale = $2 })" >/dev/null
+            "$0" restore-layout >/dev/null 2>&1 || true
+        fi
+        ok "shared screen at $(awk "BEGIN{print $2*100}") %" ;;
     audio-delay)
         # praxis-share audio-delay MS: how long this PC waits so its speakers
         # sound together with the viewer's; applied at once if sharing

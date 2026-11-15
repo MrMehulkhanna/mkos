@@ -536,6 +536,20 @@ OverlayWindow {
                             }
                         }
                     }
+                    // the screen sent to another PC: its own scale, remembered
+                    Repeater {
+                        model: Display.panels.filter(p => String(p.name).startsWith("HEADLESS"))
+                        delegate: SettingRow {
+                            required property var modelData
+                            label: "Scale · Shared screen"
+                            description: "Bigger text and windows on the screen shown on the other PC. Kept for next time."
+                            Segmented {
+                                options: [1, 1.25, 1.5, 1.75, 2].map(s => ({ value: s, label: Math.round(s * 100) + " %" }))
+                                value: Math.round(modelData.scale * 4) / 4
+                                onSelected: v => { Quickshell.execDetached(["praxis-share", "scale", String(v)]); Display.refresh() }
+                            }
+                        }
+                    }
                     // ── OLED colour ───────────────────────────────────
                     // Only on a panel that is actually OLED: hasOled comes
                     // from reading ATNA out of the EDID, so a non-OLED laptop

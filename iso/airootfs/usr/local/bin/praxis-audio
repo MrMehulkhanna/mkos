@@ -123,7 +123,7 @@ for s in json.load(sys.stdin):
         # if a screen share is sending sound, its in-step delay fed the old
         # combined output; hook it onto the new one
         if [ -f "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/praxis-share/delay.pid" ] && command -v praxis-share >/dev/null; then
-            praxis-share audio-delay "$(cat "$HOME/.config/praxis/share-audio-delay-ms" 2>/dev/null || echo 80)" >/dev/null 2>&1 || true
+            praxis-share audio-delay "$(cat "$HOME/.config/praxis/share-audio-delay-ms" 2>/dev/null || echo 60)" >/dev/null 2>&1 || true
         fi
         echo "Playing on $# speakers together, in sync."
         touch "$HOME/.config/praxis/audio-together" 2>/dev/null || { mkdir -p "$HOME/.config/praxis"; touch "$HOME/.config/praxis/audio-together"; }

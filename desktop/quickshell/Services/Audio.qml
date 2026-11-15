@@ -33,14 +33,21 @@ Singleton {
     // sinks / sources for the output-device picker
     readonly property var sinks:   Pipewire.nodes.values.filter(n => n.isSink && !n.isStream && n.audio)
     readonly property var sources: Pipewire.nodes.values.filter(n => !n.isSink && !n.isStream && n.audio)
+    // Set the default once, through WirePlumber (which remembers it), and do
+    // not hold a Quickshell "preferred" node: Quickshell re-applies that
+    // preference whenever the default changes, which overrode the outputs
+    // Praxis picks on purpose (speakers in step with a shared screen, all
+    // speakers together) moments after they were chosen.
+    Component.onCompleted: {
+        Pipewire.preferredDefaultAudioSink = null
+        Pipewire.preferredDefaultAudioSource = null
+    }
     function setDefaultSink(node) {
-        Pipewire.preferredDefaultAudioSink = node
         if (node && node.id) {
             Quickshell.execDetached(["wpctl", "set-default", String(node.id)])
         }
     }
     function setDefaultSource(node) {
-        Pipewire.preferredDefaultAudioSource = node
         if (node && node.id) {
             Quickshell.execDetached(["wpctl", "set-default", String(node.id)])
         }
