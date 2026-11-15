@@ -7,6 +7,7 @@
 #    praxis-audio reset      restart PipeWire & WirePlumber user services
 #    praxis-audio list       speakers: NAME<TAB>DESCRIPTION
 #    praxis-audio together NAME...   play on several speakers at once, in sync
+#    praxis-audio all        every connected speaker together, in sync
 #    praxis-audio single     back to one speaker
 #
 #  "together" uses PipeWire's combine-stream with latency compensation: every
@@ -60,6 +61,21 @@ case "${1:-status}" in
     list)
         list_sinks
         ;;
+    all)
+        # every speaker that is really connected — skips outputs whose port
+        # reports nothing plugged in (unused HDMI/DisplayPort sockets)
+        mapfile -t every < <(pactl -f json list sinks 2>/dev/null | python3 -c '
+import json, sys
+for s in json.load(sys.stdin):
+    if s["name"].startswith("praxis-"):
+        continue
+    ports = {p["name"]: p.get("availability", "") for p in s.get("ports", [])}
+    if ports and ports.get(s.get("active_port") or "", "") == "not available":
+        continue
+    print(s["name"])')
+        [ ${#every[@]} -ge 2 ] || { echo "only one speaker is connected" >&2; exit 1; }
+        exec "$0" together "${every[@]}"
+        ;;
     together)
         shift
         [ $# -ge 2 ] || { echo "pick at least two speakers (praxis-audio list)" >&2; exit 1; }
@@ -104,6 +120,11 @@ case "${1:-status}" in
         for _ in $(seq 1 25); do pactl list short sinks | grep -q "$TOGETHER_SINK" && break; sleep 0.2; done
         pactl set-default-sink "$TOGETHER_SINK" 2>/dev/null \
             || { echo "PipeWire did not create the combined output" >&2; exit 1; }
+        # if a screen share is sending sound, its in-step delay fed the old
+        # combined output; hook it onto the new one
+        if [ -f "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/praxis-share/delay.pid" ] && command -v praxis-share >/dev/null; then
+            praxis-share audio-delay "$(cat "$HOME/.config/praxis/share-audio-delay-ms" 2>/dev/null || echo 80)" >/dev/null 2>&1 || true
+        fi
         echo "Playing on $# speakers together, in sync."
         touch "$HOME/.config/praxis/audio-together" 2>/dev/null || { mkdir -p "$HOME/.config/praxis"; touch "$HOME/.config/praxis/audio-together"; }
         ;;
@@ -133,10 +154,10 @@ print(s[0]['properties'].get('device.name','') + ' ' + (s[0].get('active_port') 
         echo "$sink now treated as $ms ms late."
         ;;
     -h|--help|help)
-        echo "Usage: praxis-audio {status|unmute|reset|list|together NAME...|single}"
+        echo "Usage: praxis-audio {status|unmute|reset|list|all|together NAME...|single}"
         ;;
     *)
-        echo "Usage: praxis-audio {status|unmute|reset|list|together NAME...|single}"
+        echo "Usage: praxis-audio {status|unmute|reset|list|all|together NAME...|single}"
         exit 1
         ;;
 esac

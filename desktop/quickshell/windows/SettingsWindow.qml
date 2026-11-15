@@ -1118,7 +1118,7 @@ OverlayWindow {
             H { text: "PLAY ON SEVERAL SPEAKERS, IN SYNC" }
             Text {
                 width: parent.width; wrapMode: Text.WordWrap; bottomPadding: 6
-                text: "Tick two or more and press Play together. The faster speakers wait for the slowest, so every one sounds at the same moment."
+                text: "Use all speakers plays on every connected speaker at once, or tick the ones you want and press Play together. The faster speakers wait for the slowest, so every one sounds at the same moment. While a screen share sends sound, the other PC's speakers join in, in step."
                 color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.fontXs
             }
             Item {
@@ -1145,6 +1145,10 @@ OverlayWindow {
                     }
                     Row {
                         spacing: 8; topPadding: 6; bottomPadding: 6
+                        // one press: every connected speaker, in sync (the PC
+                        // viewing a shared screen joins in when sound is shared)
+                        Btn { icon: "volume-high"; label: "Use all speakers"; active: true; iconColor: Theme.onAccent
+                              onClicked: Quickshell.execDetached(["praxis-audio", "all"]) }
                         Btn { icon: "volume-high"; label: "Play together (" + together.picked.length + ")"
                               active: together.picked.length >= 2; iconColor: active ? Theme.onAccent : Theme.text2
                               onClicked: if (together.picked.length >= 2) Quickshell.execDetached(["praxis-audio", "together"].concat(together.picked)) }
