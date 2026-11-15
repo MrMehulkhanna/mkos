@@ -174,6 +174,15 @@ hl.config({
         layout = "dwindle",
     },
 
+    -- No screen re-sync when an app goes fullscreen. Both of these change the
+    -- display's mode on fullscreen, which blanks the screen for about a
+    -- second: send_content_type tells the monitor "game"/"video" so it
+    -- switches picture profile, and cm_auto_hdr flips the OLED into HDR.
+    render = {
+        send_content_type = false,
+        cm_auto_hdr       = 0,
+    },
+
     decoration = {
         rounding       = 14,             -- was 10 — smoother macOS-like rounding
         rounding_power = 2.5,
