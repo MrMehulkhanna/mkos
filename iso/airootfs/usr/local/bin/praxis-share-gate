@@ -538,6 +538,9 @@ def lm_write(fps: dict, clients: list) -> None:
     tmp = LM_CONF + ".tmp"
     open(tmp, "w").write("\n".join(out) + "\n")
     os.replace(tmp, LM_CONF)
+    # Praxis's own copy: lan-mouse rewrites config.toml itself and has
+    # dropped the paired PCs from it; praxis-mouse restores from this
+    open(os.path.join(LM_DIR, "config.praxis.toml"), "w").write("\n".join(out) + "\n")
 
 
 def lm_add_peer(name: str, ip: str, pos: str, fp: str) -> None:
@@ -604,6 +607,162 @@ def mouse_pair(host: str, pos: str, code: str) -> int:
     return 0
 
 
+# ── shared clipboard ────────────────────────────────────────────────────
+# Copy on one PC, paste on the other: text, images and files. Each copy is
+# sent once over the same TLS-PSK link as the screen share, to every PC the
+# mouse is shared with. Files travel as a tar and land in
+# ~/Downloads/From <PC>/, and the clipboard there then holds those files, so
+# pasting in a file manager copies them where you want. The hash of what
+# arrived is remembered so it is not sent straight back.
+CLIP_PORT = 5923
+CLIP_MAX = 512 * 1024 * 1024
+CLIP_STATE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "praxis-clip")
+
+
+def _clip_seen(digest: str | None = None) -> str:
+    os.makedirs(CLIP_STATE, exist_ok=True)
+    f = os.path.join(CLIP_STATE, "last")
+    if digest is not None:
+        open(f, "w").write(digest)
+        return digest
+    try:
+        return open(f).read().strip()
+    except OSError:
+        return ""
+
+
+def _tls_ctx(server: bool, code: str):
+    key = psk_from(code)
+    if server:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.set_psk_server_callback(lambda identity: key, IDENTITY.decode())
+    else:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        ctx.set_psk_client_callback(lambda hint: (IDENTITY.decode(), key))
+    ctx.set_ciphers("PSK")
+    return ctx
+
+
+def _recv_exact(sock, n: int) -> bytes:
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = sock.recv(min(1 << 20, n - len(buf)))
+        if not chunk:
+            raise OSError("short read")
+        buf += chunk
+    return bytes(buf)
+
+
+def _files_digest(paths: list[str]) -> str:
+    """Names and contents only: the tar bytes differ between PCs (owner,
+    uid), so hashing them let a received copy look new and bounce back."""
+    import hashlib
+    h = hashlib.sha256()
+    for p in sorted(paths, key=lambda x: os.path.basename(x.rstrip("/"))):
+        for root, _dirs, files in (os.walk(p) if os.path.isdir(p) else [(os.path.dirname(p), [], [os.path.basename(p)])]):
+            for f in sorted(files):
+                fp = os.path.join(root, f)
+                h.update(os.path.relpath(fp, os.path.dirname(p.rstrip("/"))).encode())
+                with open(fp, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b""):
+                        h.update(chunk)
+    return h.hexdigest()
+
+
+def clip_listen(code: str) -> int:
+    import hashlib, io, tarfile, urllib.parse
+    ctx = _tls_ctx(True, code)
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", CLIP_PORT))
+    srv.listen(4)
+    print(f"clip: listening on {CLIP_PORT}", flush=True)
+    while True:
+        raw, addr = srv.accept()
+        try:
+            raw.settimeout(60)
+            tls = ctx.wrap_socket(raw, server_side=True)
+            hdr = b""
+            while not hdr.endswith(b"\n") and len(hdr) < 4096:
+                hdr += tls.recv(1)
+            h = json.loads(hdr)
+            size = int(h["size"])
+            if size > CLIP_MAX:
+                raise ValueError("too big")
+            data = _recv_exact(tls, size)
+            if h.get("kind") != "files":
+                _clip_seen(hashlib.sha256(data).hexdigest())
+            if h.get("kind") == "files":
+                who = re.sub(r"[^A-Za-z0-9 _.-]", "_", h.get("from", addr[0]))[:40]
+                dest = os.path.join(os.path.expanduser("~/Downloads"), f"From {who}")
+                os.makedirs(dest, exist_ok=True)
+                with tarfile.open(fileobj=io.BytesIO(data)) as t:
+                    t.extractall(dest, filter="data")
+                    names = sorted({m.name.split("/")[0] for m in t.getmembers()})
+                _clip_seen(_files_digest([os.path.join(dest, n) for n in names]))
+                uris = "\n".join("file://" + urllib.parse.quote(os.path.join(dest, n)) for n in names)
+                subprocess.run(["wl-copy", "--type", "text/uri-list"], input=uris.encode(), check=False)
+                print(f"clip: {len(names)} file(s) from {addr[0]} -> {dest}", flush=True)
+            else:
+                mime = h.get("mime", "text/plain;charset=utf-8")
+                if not re.fullmatch(r"[a-z]+/[A-Za-z0-9.+-]+(;charset=[A-Za-z0-9-]+)?", mime):
+                    raise ValueError("bad mime")
+                subprocess.run(["wl-copy", "--type", mime], input=data, check=False)
+                print(f"clip: {mime} {size} B from {addr[0]}", flush=True)
+        except (OSError, ssl.SSLError, ValueError, KeyError, json.JSONDecodeError) as e:
+            print(f"clip: refused {addr[0]} ({e})", flush=True)
+        finally:
+            raw.close()
+
+
+def clip_send(hosts: list[str], code: str) -> int:
+    """Send what is on this PC's clipboard now to each host."""
+    import hashlib, io, tarfile, urllib.parse
+    types = subprocess.run(["wl-paste", "--list-types"], capture_output=True, text=True).stdout.split()
+    if not types:
+        return 0
+    kind, mime, data, fdig = "data", None, b"", ""
+    if "text/uri-list" in types:
+        uris = subprocess.run(["wl-paste", "--type", "text/uri-list"], capture_output=True).stdout.decode(errors="replace")
+        paths = [urllib.parse.unquote(u[7:]) for u in uris.split() if u.startswith("file://")]
+        paths = [p for p in paths if os.path.exists(p)]
+        if paths:
+            fdig = _files_digest(paths)
+            if fdig == _clip_seen():
+                return 0              # these files just arrived from the other PC
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as t:
+                for p in paths:
+                    t.add(p, arcname=os.path.basename(p.rstrip("/")))
+            kind, data = "files", buf.getvalue()
+    if kind == "data":
+        for m in ("image/png", "image/jpeg", "text/plain;charset=utf-8", "UTF8_STRING", "text/plain"):
+            if m in types:
+                mime = "text/plain;charset=utf-8" if m == "UTF8_STRING" else m
+                data = subprocess.run(["wl-paste", "--no-newline", "--type", m], capture_output=True).stdout
+                break
+        if mime is None or not data:
+            return 0
+    if len(data) > CLIP_MAX:
+        print("clip: too big to send", file=sys.stderr); return 0
+    digest = fdig if kind == "files" else hashlib.sha256(data).hexdigest()
+    if digest == _clip_seen():
+        return 0                      # it just arrived from the other PC
+    _clip_seen(digest)
+    hdr = json.dumps({"kind": kind, "mime": mime, "size": len(data),
+                      "from": socket.gethostname() or "praxis"}).encode() + b"\n"
+    for host in hosts:
+        try:
+            with _tls_ctx(False, code).wrap_socket(socket.create_connection((host, CLIP_PORT), timeout=5),
+                                                   server_hostname=None) as tls:
+                tls.sendall(hdr + data)
+        except (OSError, ssl.SSLError) as e:
+            print(f"clip: could not send to {host} ({e})", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(add_help=True)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -627,6 +786,11 @@ def main(argv: list[str]) -> int:
     mp.add_argument("--code", required=True)
     mf = sub.add_parser("mouse-forget")
     mf.add_argument("--pos", required=True, choices=sorted(OPPOSITE))
+    cl = sub.add_parser("clip-listen")
+    cl.add_argument("--code", required=True)
+    cs = sub.add_parser("clip-send")
+    cs.add_argument("--code", required=True)
+    cs.add_argument("hosts", nargs="+")
     sub.add_parser("newcode")
     sub.add_parser("scan")
     a = ap.parse_args(argv)
@@ -635,6 +799,10 @@ def main(argv: list[str]) -> int:
     if a.cmd == "scan":
         print(json.dumps(scan()))
         return 0
+    if a.cmd == "clip-listen":
+        return clip_listen(a.code)
+    if a.cmd == "clip-send":
+        return clip_send(a.hosts, a.code)
     if a.cmd == "mouse-listen":
         return mouse_listen(a.code)
     if a.cmd == "mouse-pair":

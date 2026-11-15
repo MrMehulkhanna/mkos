@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# praxis-mouse — use one mouse and keyboard across two Praxis PCs.
+# praxis-mouse — use one mouse, keyboard and clipboard across two Praxis PCs.
 #
 #   praxis-mouse on                 start sharing now and at every login
 #   praxis-mouse off                stop, and stay off
@@ -44,9 +44,20 @@ ensure_cert() {
 
 running() { [ -f "$STATE/$1.pid" ] && kill -0 "$(cat "$STATE/$1.pid")" 2>/dev/null; }
 
+# lan-mouse rewrites its config file itself (on activate/deactivate) and
+# has been seen to drop the paired PCs from it. Praxis keeps its own copy,
+# saved after every pairing, and puts it back before lan-mouse starts.
+KEEP="$LM_DIR/config.praxis.toml"
+save_pairing() { cp "$LM_DIR/config.toml" "$KEEP" 2>/dev/null || true; }
+restore_pairing() {
+    [ -s "$KEEP" ] || return 0
+    grep -q '^\[\[clients\]\]' "$LM_DIR/config.toml" 2>/dev/null || cp "$KEEP" "$LM_DIR/config.toml"
+}
+
 start() {
     [ -n "$(lm)" ] || die "lan-mouse is not installed — run the Praxis update"
     ensure_cert
+    running daemon || restore_pairing
     if ! running daemon; then
         # layer-shell capture: Hyprland's portal has no InputCapture, which
         # lan-mouse would otherwise try first and get nothing from
@@ -58,11 +69,24 @@ start() {
         setsid praxis-share-gate mouse-listen --code "$CODE" >"$STATE/listen.log" 2>&1 &
         echo $! > "$STATE/listen.pid"
     fi
+    # shared clipboard with the same PCs: copy here, paste there (text,
+    # images, files); see clip_listen in praxis-share-gate
+    if ! running clip; then
+        setsid praxis-share-gate clip-listen --code "$CODE" >"$STATE/clip.log" 2>&1 &
+        echo $! > "$STATE/clip.pid"
+    fi
+    local peers; peers=$(grep -oE '^ips = \["[^"]+"' "$LM_DIR/config.toml" 2>/dev/null | cut -d'"' -f2 | tr '\n' ' ' || true)
+    if [ -n "$peers" ] && ! running clipwatch && command -v wl-paste >/dev/null; then
+        # shellcheck disable=SC2086
+        setsid wl-paste --watch praxis-share-gate clip-send --code "$CODE" $peers \
+            >"$STATE/clipwatch.log" 2>&1 &
+        echo $! > "$STATE/clipwatch.pid"
+    fi
 }
 
 stop() {
     local p
-    for p in daemon listen; do
+    for p in daemon listen clip clipwatch; do
         running "$p" && kill "$(cat "$STATE/$p.pid")" 2>/dev/null || true
         rm -f "$STATE/$p.pid"
     done
@@ -91,6 +115,7 @@ case "${1:-status}" in
 
     restart)
         running daemon && { kill "$(cat "$STATE/daemon.pid")" 2>/dev/null || true; rm -f "$STATE/daemon.pid"; sleep 0.5; }
+        running clipwatch && { kill "$(cat "$STATE/clipwatch.pid")" 2>/dev/null || true; rm -f "$STATE/clipwatch.pid"; }
         [ -f "$FLAG" ] && start || true ;;
     pair)
         host="${2:-}"; pos="${3:-}"
@@ -98,10 +123,11 @@ case "${1:-status}" in
         mkdir -p "${FLAG%/*}"; touch "$FLAG"
         ensure_cert; start
         praxis-share-gate mouse-pair --host "${host%%:*}" --pos "$pos" --code "$CODE"
+        save_pairing
         "$0" restart; ok "move the pointer off the $pos edge to reach it" ;;
     forget)
         [[ "${2:-}" =~ ^(left|right|top|bottom)$ ]] || die "usage: praxis-mouse forget left|right"
-        praxis-share-gate mouse-forget --pos "$2"; "$0" restart; ok "forgot the PC on the $2" ;;
+        praxis-share-gate mouse-forget --pos "$2"; save_pairing; "$0" restart; ok "forgot the PC on the $2" ;;
     status)
         if running daemon; then ok "on"; else info "off"; fi
         grep -A3 '^\[\[clients\]\]' "$LM_DIR/config.toml" 2>/dev/null \
