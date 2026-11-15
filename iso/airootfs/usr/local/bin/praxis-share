@@ -243,6 +243,7 @@ cmd_mirror() {
 cmd_on_connect_stream() {
     # Called by the gate when the first viewer completes TLS handshake
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+        echo "PRAXIS-CODEC $(cat "$STATE_DIR/codec" 2>/dev/null || echo h264)"
         return 0
     fi
     local mode; mode=$(cat "$STATE_DIR/mode" 2>/dev/null || echo "extend")
@@ -296,6 +297,7 @@ cmd_on_connect_stream() {
     [[ "$r" =~ @([0-9]+) ]] && hz=${BASH_REMATCH[1]}
     [ "$hz" -gt 120 ] && hz=120; [ "$hz" -lt 30 ] && hz=60
     start_stream "$mon" "$port" "$hz"
+    echo "PRAXIS-CODEC $(cat "$STATE_DIR/codec" 2>/dev/null || echo h264)"
 }
 
 start_stream() {
@@ -359,6 +361,11 @@ start_stream() {
         # (20 dB -> 59 dB on 1-pixel lines and small coloured text).
         *) fmtargs=(-F "scale=flags=accurate_rnd+full_chroma_int+full_chroma_inp:out_color_matrix=bt601:out_range=pc") ;;
     esac
+    if [ "$enc" = hevc_nvenc ] && gst-inspect-1.0 nvh265enc >/dev/null 2>&1 \
+       && gst-inspect-1.0 cudaconvert >/dev/null 2>&1; then
+        start_stream_gst "$mon" "$inner" "$fps"; return
+    fi
+    case "$enc" in hevc*) echo hevc ;; *) echo h264 ;; esac > "$STATE_DIR/codec"
     setsid wf-recorder -y -D -o "$mon" -c "$enc" -m mpegts -r "$fps" "${fmtargs[@]}" \
         "${pargs[@]}" "${aargs[@]}" -f "$FIFO" >"$STATE_DIR/capture.log" 2>&1 &
     echo $! > "$PID_FILE"
@@ -370,6 +377,81 @@ start_stream() {
         ! tcpserversink host=127.0.0.1 port="$inner" sync=false \
         >"$STATE_DIR/serve.log" 2>&1 &
     echo $! > "$SERVE_PID_FILE"
+}
+
+# The low-delay path on NVIDIA. wf-recorder only captures, as raw frames;
+# GStreamer moves them to the GPU, converts to 4:4:4 there and encodes with
+# NVENC in zero-latency mode. Measured screen-to-screen with a frame counter:
+# 100-140 ms when wf-recorder encoded (its encoder pipeline holds frames),
+# 50-75 ms this way, and the same picture (4:4:4, 45 dB on the test card).
+# Sound is a second stream in the same MPEG-TS; the muxer is told not to
+# wait for it (latency=0), so it never holds a video frame back.
+start_stream_gst() {
+    local mon="$1" inner="$2" fps="$3" wh
+    wh=$(monitors | python3 -c 'import json,sys
+m=[m for m in json.load(sys.stdin) if m["name"]==sys.argv[1]][0]; print(m["width"], m["height"])' "$mon")
+    local w=${wh% *} h=${wh#* }
+    local br=${SHARE_BITRATE:-30M}; local kbps=$(( ${br%M} * 1000 ))
+    setsid wf-recorder -y -D -o "$mon" -c rawvideo -m rawvideo -x bgr0 -f "$FIFO" \
+        >"$STATE_DIR/capture.log" 2>&1 &
+    echo $! > "$PID_FILE"
+    local -a audio=()
+    if [ "$WITH_AUDIO" = 1 ]; then
+        local src; src=$(default_monitor || true)
+        # uncompressed 48 kHz stereo (1.5 Mb/s): no codec delay, and on its
+        # own loopback port so it can never hold a picture frame back
+        [ -n "$src" ] && audio=(pulsesrc device="$src" do-timestamp=true buffer-time=20000 latency-time=5000
+            ! audioconvert ! audioresample ! "audio/x-raw,format=S16BE,rate=48000,channels=2"
+            ! rtpL16pay mtu=1400 ! rtpstreampay ! tcpserversink host=127.0.0.1 port=$(( inner + 1 )) sync=false)
+    fi
+    info "encoding on the GPU: ${w}x${h} 4:4:4 at $fps fps, $br"
+    echo hevc-rtp > "$STATE_DIR/codec"
+    # RTP, not MPEG-TS: every RTP frame ends with a marker, so the viewer
+    # decodes it the moment its last packet lands. An MPEG-TS demuxer only
+    # releases a frame once the next one starts — that alone was ~25 ms.
+    # leaky only on raw frames (dropping one is harmless); never after encode
+    setsid gst-launch-1.0 -q \
+        filesrc location="$FIFO" blocksize=$(( w * h * 4 )) \
+        ! rawvideoparse width="$w" height="$h" format=bgrx framerate="$fps/1" \
+        ! queue leaky=downstream max-size-buffers=1 max-size-bytes=0 max-size-time=0 \
+        ! cudaupload ! cudaconvert ! "video/x-raw(memory:CUDAMemory),format=Y444" \
+        ! nvh265enc preset=p1 tune=ultra-low-latency zerolatency=true bframes=0 \
+            gop-size=30 rc-mode=cbr bitrate="$kbps" \
+        ! rtph265pay config-interval=-1 mtu=8192 ! rtpstreampay \
+        ! tcpserversink host=127.0.0.1 port="$inner" sync=false \
+        "${audio[@]}" >"$STATE_DIR/serve.log" 2>&1 &
+    echo $! > "$SERVE_PID_FILE"
+}
+
+# Viewer for the RTP stream (see start_stream_gst). Sound comes over its own
+# link — a second gate connection to the host's next port — and plays with
+# a short buffer, separate from the picture so neither waits on the other.
+view_rtp() {
+    local dec="nvh265dec max-display-delay=0"
+    gst-inspect-1.0 nvh265dec >/dev/null 2>&1 || dec="avdec_h265"
+    echo "$target" > "$STATE_DIR/viewer.target"
+    gst-launch-1.0 -q \
+        tcpclientsrc host=127.0.0.1 port="$local_port" \
+        ! "application/x-rtp-stream,encoding-name=H265" ! rtpstreamdepay \
+        ! "application/x-rtp,media=video,clock-rate=90000,encoding-name=H265" \
+        ! rtph265depay ! h265parse ! $dec \
+        ! queue leaky=downstream max-size-buffers=1 \
+        ! $vconv ! $vsink sync=false async=false &
+    VIEW_PID=$!; VIEW_GATE=$gate; VIEW_AUDIO=""
+    setsid praxis-share-gate client --host "$host" --port "$port" --listen $(( local_port + 1 )) \
+        --code "$code" --audio >"$STATE_DIR/client-audio.log" 2>&1 &
+    local agate=$!
+    ( sleep 1
+      exec gst-launch-1.0 -q tcpclientsrc host=127.0.0.1 port=$(( local_port + 1 )) \
+        ! "application/x-rtp-stream,media=audio,clock-rate=48000,encoding-name=L16,channels=2" ! rtpstreamdepay \
+        ! "application/x-rtp,media=audio,clock-rate=48000,encoding-name=L16,channels=2" \
+        ! rtpL16depay ! audioconvert ! audioresample \
+        ! queue leaky=downstream max-size-time=60000000 ! $asink sync=false buffer-time=40000 latency-time=10000
+    ) >"$STATE_DIR/viewer-audio.log" 2>&1 &
+    VIEW_AUDIO="$agate $!"
+    echo "$VIEW_GATE $VIEW_PID $VIEW_AUDIO" > "$STATE_DIR/viewer.pids"
+    trap 'kill ${VIEW_GATE:-} ${VIEW_PID:-} ${VIEW_AUDIO:-} 2>/dev/null || true; rm -f "$STATE_DIR/viewer.pids" "$STATE_DIR/viewer.target"' EXIT INT TERM
+    wait "$VIEW_PID" || true
 }
 
 cmd_connect() {
@@ -449,11 +531,18 @@ if m: print("%s %dx%d@%d s%g" % (m["name"], m["width"], m["height"], min(120, ro
     # open the picture on that real screen, never on a virtual one left over
     # from sharing this PC, where it would be invisible
     local myout="${myres%% *}"; myres="${myres#* }"
+    # tests: show the picture on a given output instead
+    [ -n "${PRAXIS_SHARE_VIEW_ON:-}" ] && { myout=$PRAXIS_SHARE_VIEW_ON; myres="1920x1080@120 s1"; }
     [ -n "$myout" ] && hyprctl dispatch "hl.dsp.focus({monitor=\"$myout\"})" >/dev/null 2>&1 || true
     setsid praxis-share-gate client --host "$host" --port "$port" \
         --listen "$local_port" --code "$code" ${myres:+--res "$myres"} >"$STATE_DIR/client.log" 2>&1 &
-    local gate=$!
-    sleep 2
+    local gate=$! i
+    # wait for the link (and the host's codec line) rather than a fixed nap
+    for i in $(seq 1 40); do
+        grep -q "play from" "$STATE_DIR/client.log" 2>/dev/null && break
+        kill -0 "$gate" 2>/dev/null || break
+        sleep 0.25
+    done
     if ! kill -0 "$gate" 2>/dev/null; then
         printf '\n'; sed 's/^/  /' "$STATE_DIR/client.log" 2>/dev/null | tail -3
         die "could not connect"
@@ -489,14 +578,33 @@ if m: print("%s %dx%d@%d s%g" % (m["name"], m["width"], m["height"], min(120, ro
     # foreground: bash does not run a trap while a foreground child is
     # running, so a Disconnect from the window used to leave the picture up
     # until the stream died on its own. With wait, a signal lands at once.
+    # The decoder for the codec the host announced. NVDEC with no display
+    # delay hands each frame over as soon as it is decoded (by default it
+    # holds a few back); without NVIDIA, libav. An older host announces
+    # nothing: decodebin3 works it out.
+    local codec; codec=$(grep -oE 'codec [a-z0-9-]+' "$STATE_DIR/client.log" 2>/dev/null | awk '{print $2}' | tail -1)
+    # each branch named by its track type: gst-launch otherwise hands a
+    # demuxer pad to whichever branch takes it first, and with no sound
+    # track the video could land on the AAC decoder and show nothing
+    local vcaps=""
+    case "$codec" in hevc) vcaps="video/x-h265 !" ;; h264) vcaps="video/x-h264 !" ;; esac
+    local vdec="decodebin3"
+    if [ "$codec" = hevc-rtp ]; then view_rtp; return; fi
+    case "$codec" in
+        hevc) if gst-inspect-1.0 nvh265dec >/dev/null 2>&1; then vdec="h265parse ! nvh265dec max-display-delay=0"
+              else vdec="h265parse ! avdec_h265"; fi ;;
+        h264) if gst-inspect-1.0 nvh264dec >/dev/null 2>&1; then vdec="h264parse ! nvh264dec max-display-delay=0"
+              else vdec="h264parse ! avdec_h264 output-corrupt=false"; fi ;;
+    esac
+
     echo "$target" > "$STATE_DIR/viewer.target"
     gst-launch-1.0 -q \
         tcpclientsrc host=127.0.0.1 port="$local_port" ! tsdemux name=d latency=0 \
-        d. ! queue max-size-buffers=0 max-size-bytes=0 max-size-time=0 \
-           ! decodebin3 \
+        d. ! $vcaps queue max-size-buffers=0 max-size-bytes=0 max-size-time=0 \
+           ! $vdec \
            ! queue leaky=downstream max-size-buffers=1 \
            ! $vconv ! $vsink sync=false async=false \
-        d. ! queue leaky=downstream max-size-buffers=0 max-size-bytes=0 max-size-time=100000000 \
+        d. ! audio/mpeg ! queue leaky=downstream max-size-buffers=0 max-size-bytes=0 max-size-time=100000000 \
            ! aacparse ! avdec_aac ! audioconvert ! audioresample ! $asink sync=false async=false &
     VIEW_PID=$!; VIEW_GATE=$gate
     echo "$VIEW_GATE $VIEW_PID" > "$STATE_DIR/viewer.pids"

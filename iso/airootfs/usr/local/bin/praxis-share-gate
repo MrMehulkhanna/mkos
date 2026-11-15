@@ -361,6 +361,8 @@ def serve(listen_port: int, to_port: int, code: str, on_connect: str | None = No
                     if not ch:
                         break
                     hello += ch
+                if hello == b"PRAXIS-AUDIO\n":
+                    env['PRAXIS_SHARE_AUDIO_LINK'] = "1"
                 m = re.fullmatch(rb"PRAXIS-RES (\d{3,5})x(\d{3,5})@(\d{2,3})(?: s([0-9]\.?[0-9]{0,3}))?\n", hello)
                 if m:
                     env['PRAXIS_SHARE_RES'] = m.expand(rb"\1x\2@\3").decode()
@@ -372,12 +374,19 @@ def serve(listen_port: int, to_port: int, code: str, on_connect: str | None = No
                 pass
             finally:
                 tls.settimeout(None)
-            if on_connect:
+            audio_link = env.get('PRAXIS_SHARE_AUDIO_LINK') == "1"
+            if on_connect and not audio_link:
                 try:
                     # tell the stream who connected, so it can pick a bitrate
                     # to suit the link (Wi-Fi or a cable)
-                    subprocess.run(on_connect, shell=True, check=True,
-                                   env=env)
+                    r = subprocess.run(on_connect, shell=True, check=True, env=env,
+                                       stdout=subprocess.PIPE, text=True)
+                    sys.stdout.write(r.stdout); sys.stdout.flush()
+                    # tell the viewer which codec is coming, so it can pick
+                    # the hardware decoder directly with no frame buffering
+                    codec = [l for l in r.stdout.splitlines() if l.startswith("PRAXIS-CODEC ")]
+                    if codec:
+                        tls.sendall((codec[-1] + "\n").encode())
                 except Exception as e:
                     print(f"gate: on-connect failed: {e}", flush=True)
 
@@ -385,7 +394,8 @@ def serve(listen_port: int, to_port: int, code: str, on_connect: str | None = No
             t_giveup = time.time() + 4.0
             while time.time() < t_giveup:
                 try:
-                    up = socket.create_connection(("127.0.0.1", to_port), timeout=1.0)
+                    # the sound has its own loopback port, next to the picture's
+                    up = socket.create_connection(("127.0.0.1", to_port + (1 if audio_link else 0)), timeout=1.0)
                     break
                 except OSError:
                     time.sleep(0.2)
@@ -410,7 +420,8 @@ def serve(listen_port: int, to_port: int, code: str, on_connect: str | None = No
     return 0
 
 
-def client(host: str, port: int, listen_port: int, code: str, res: str | None = None) -> int:
+def client(host: str, port: int, listen_port: int, code: str, res: str | None = None,
+           audio: bool = False) -> int:
     key = psk_from(code)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
@@ -428,8 +439,31 @@ def client(host: str, port: int, listen_port: int, code: str, res: str | None = 
         print(f"praxis-share-gate: cannot reach {host}:{port} ({e})", file=sys.stderr)
         return 3
 
-    if res:
+    if audio:
+        tls.sendall(b"PRAXIS-AUDIO\n")
+    elif res:
         tls.sendall(f"PRAXIS-RES {res}\n".encode())
+
+    # A current host answers with the codec before the stream starts. Read
+    # it byte by byte so no stream data is swallowed; an older host sends
+    # the stream straight away (MPEG-TS starts with 0x47), kept for replay.
+    pending = b""
+    try:
+        tls.settimeout(0.01 if audio else 8)
+        while not pending.endswith(b"\n") and len(pending) < 64:
+            ch = tls.recv(1)
+            if not ch:
+                break
+            pending += ch
+            if pending[:1] == b"\x47":
+                break
+    except (socket.timeout, OSError):
+        pass
+    finally:
+        tls.settimeout(None)
+    if pending.startswith(b"PRAXIS-CODEC "):
+        print(f"gate: codec {pending.decode().split()[1]}", flush=True)
+        pending = b""
 
     lsn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     lsn.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -441,6 +475,8 @@ def client(host: str, port: int, listen_port: int, code: str, res: str | None = 
     lsn.listen(1)
     print(f"gate: connected — play from 127.0.0.1:{actual_port}", flush=True)
     local, _ = lsn.accept()
+    if pending:
+        local.sendall(pending)
     t1 = threading.Thread(target=pipe, args=(tls, local), daemon=True)
     t2 = threading.Thread(target=pipe, args=(local, tls), daemon=True)
     t1.start(); t2.start()
@@ -582,6 +618,7 @@ def main(argv: list[str]) -> int:
     c.add_argument("--listen", type=int, required=True)
     c.add_argument("--code", required=True)
     c.add_argument("--res", help="this screen, WxH@Hz, so the host matches it")
+    c.add_argument("--audio", action="store_true", help="the sound link, not the picture")
     ml = sub.add_parser("mouse-listen")
     ml.add_argument("--code", required=True)
     mp = sub.add_parser("mouse-pair")
@@ -608,7 +645,7 @@ def main(argv: list[str]) -> int:
         return 0
     if a.cmd == "serve":
         return serve(a.listen, a.to, a.code, a.on_connect)
-    return client(a.host, a.port, a.listen, a.code, a.res)
+    return client(a.host, a.port, a.listen, a.code, a.res, a.audio)
 
 
 if __name__ == "__main__":
