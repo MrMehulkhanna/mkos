@@ -184,6 +184,15 @@ def scan(timeout: float = 1.2) -> list[dict]:
 
     devices: dict[str, dict] = {}
     my_ip = get_local_ip()
+    my_ips = {my_ip, "127.0.0.1"}
+    try:
+        for line in subprocess.check_output(["ip", "-4", "-o", "addr", "show"], text=True,
+                                            stderr=subprocess.DEVNULL).splitlines():
+            p = line.split()
+            if "inet" in p:
+                my_ips.add(p[p.index("inet") + 1].split("/")[0])
+    except Exception:
+        pass
     end_time = time.time() + timeout
     while time.time() < end_time:
         rem = end_time - time.time()
@@ -194,17 +203,19 @@ def scan(timeout: float = 1.2) -> list[dict]:
             data, addr = s.recvfrom(2048)
             if data.startswith(b"PRAXIS_BEACON:"):
                 info = json.loads(data[len(b"PRAXIS_BEACON:"):].decode("utf-8"))
-                ip = info.get("ip") or addr[0]
+                # The address the beacon came FROM is the one that reaches it.
+                # The address written inside is the sender's default route,
+                # which on a PC with Wi-Fi and a cable is the Wi-Fi one: over
+                # the cable the list showed an address that cannot connect.
+                ip = addr[0]
                 port = info.get("port", 5920)
                 name = info.get("name") or ip
-                if ip == "127.0.0.1" and addr[0] != "127.0.0.1":
-                    ip = addr[0]
                 key = f"{ip}:{port}"
                 devices[key] = {
                     "name": name,
                     "ip": ip,
                     "port": port,
-                    "is_self": (ip == my_ip)
+                    "is_self": (ip in my_ips)
                 }
         except (socket.timeout, OSError, json.JSONDecodeError):
             pass
@@ -237,7 +248,7 @@ def scan(timeout: float = 1.2) -> list[dict]:
                 return ip
         except OSError:
             return None
-    todo = [ip for ip in dict.fromkeys(candidates) if ip not in known and ip != my_ip]
+    todo = [ip for ip in dict.fromkeys(candidates) if ip not in known and ip not in my_ips]
     if todo:
         with ThreadPoolExecutor(max_workers=128) as ex:
             for ip in ex.map(knock, todo):
@@ -350,9 +361,13 @@ def serve(listen_port: int, to_port: int, code: str, on_connect: str | None = No
                     if not ch:
                         break
                     hello += ch
-                m = re.fullmatch(rb"PRAXIS-RES (\d{3,5})x(\d{3,5})@(\d{2,3})\n", hello)
+                m = re.fullmatch(rb"PRAXIS-RES (\d{3,5})x(\d{3,5})@(\d{2,3})(?: s([0-9]\.?[0-9]{0,3}))?\n", hello)
                 if m:
                     env['PRAXIS_SHARE_RES'] = m.expand(rb"\1x\2@\3").decode()
+                    # the viewer's own scale, so the extra display looks the
+                    # same size as that screen's desktop
+                    if m.group(4) and 1.0 <= float(m.group(4)) <= 3.0:
+                        env['PRAXIS_SHARE_SCALE'] = m.group(4).decode()
             except (socket.timeout, ssl.SSLError, OSError):
                 pass
             finally:
@@ -433,6 +448,126 @@ def client(host: str, port: int, listen_port: int, code: str, res: str | None = 
     return 0
 
 
+# ── mouse & keyboard sharing (lan-mouse) ────────────────────────────────
+# lan-mouse only accepts a peer whose certificate fingerprint it already
+# trusts. Swapping fingerprints by hand is fiddly, so two Praxis PCs swap
+# them over the same TLS-PSK link the screen share uses: the code that lets
+# a viewer in also vouches for the fingerprint it sends.
+MOUSE_PAIR_PORT = 5922
+LM_DIR = os.path.expanduser("~/.config/lan-mouse")
+LM_CONF = os.path.join(LM_DIR, "config.toml")
+OPPOSITE = {"left": "right", "right": "left", "top": "bottom", "bottom": "top"}
+
+
+def lm_fingerprint() -> str:
+    pem = os.path.join(LM_DIR, "lan-mouse.pem")
+    out = subprocess.check_output(["openssl", "x509", "-in", pem, "-noout", "-fingerprint", "-sha256"], text=True)
+    return out.strip().split("=", 1)[1].lower()
+
+
+def lm_read() -> dict:
+    """The parts of the config we manage: {fingerprint: name}, [client dicts]."""
+    fps, clients, cur = {}, [], None
+    try:
+        lines = open(LM_CONF).read().splitlines()
+    except OSError:
+        lines = []
+    section = ""
+    for ln in lines:
+        t = ln.strip()
+        if t.startswith("[[clients]]"):
+            cur = {}; clients.append(cur); section = "client"; continue
+        if t.startswith("[authorized_fingerprints]"):
+            section = "fp"; cur = None; continue
+        m = re.match(r'"?([^"=]+?)"?\s*=\s*(.+)$', t)
+        if not m:
+            continue
+        k, v = m.group(1).strip(), m.group(2).strip()
+        if section == "fp":
+            fps[k] = v.strip('"')
+        elif section == "client" and cur is not None:
+            cur[k] = v
+    return {"fps": fps, "clients": clients}
+
+
+def lm_write(fps: dict, clients: list) -> None:
+    os.makedirs(LM_DIR, exist_ok=True)
+    out = ["# Praxis: mouse & keyboard sharing (written by praxis-mouse)",
+           "port = 4242",
+           'release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]', "",
+           "[authorized_fingerprints]"]
+    out += [f'"{k}" = "{v}"' for k, v in fps.items()]
+    for c in clients:
+        out += ["", "[[clients]]"] + [f"{k} = {v}" for k, v in c.items()]
+    tmp = LM_CONF + ".tmp"
+    open(tmp, "w").write("\n".join(out) + "\n")
+    os.replace(tmp, LM_CONF)
+
+
+def lm_add_peer(name: str, ip: str, pos: str, fp: str) -> None:
+    """Trust the peer and place it at pos; one PC per side, newest wins."""
+    name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)[:40] or ip
+    cfg = lm_read()
+    fps = {k: v for k, v in cfg["fps"].items() if v != name}
+    fps[fp] = name
+    keep = [c for c in cfg["clients"]
+            if c.get("position", "").strip('"') != pos and c.get("hostname", "").strip('"') != name]
+    keep.append({"position": f'"{pos}"', "hostname": f'"{name}"',
+                 "ips": f'["{ip}"]', "activate_on_startup": "true"})
+    lm_write(fps, keep)
+
+
+def mouse_listen(code: str) -> int:
+    key = psk_from(code)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.set_ciphers("PSK")
+    ctx.set_psk_server_callback(lambda identity: key, IDENTITY.decode())
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", MOUSE_PAIR_PORT))
+    srv.listen(4)
+    print(f"mouse: pairing on {MOUSE_PAIR_PORT}", flush=True)
+    while True:
+        raw, addr = srv.accept()
+        try:
+            raw.settimeout(10)
+            tls = ctx.wrap_socket(raw, server_side=True)
+            req = json.loads(tls.recv(4096).decode())
+            pos = req.get("pos")
+            if pos not in OPPOSITE or not re.fullmatch(r"[0-9a-f:]{95}", req.get("fp", "")):
+                raise ValueError("bad request")
+            # they put us at pos, so they sit on the opposite side of us
+            lm_add_peer(req.get("name", addr[0]), addr[0], OPPOSITE[pos], req["fp"])
+            tls.sendall(json.dumps({"fp": lm_fingerprint(), "name": socket.gethostname() or "praxis"}).encode())
+            tls.close()
+            print(f"mouse: paired with {addr[0]} ({req.get('name')}) on our {OPPOSITE[pos]}", flush=True)
+            subprocess.run(["praxis-mouse", "restart"], check=False)
+        except (OSError, ssl.SSLError, ValueError, json.JSONDecodeError) as e:
+            print(f"mouse: refused {addr[0]} ({e})", flush=True)
+        finally:
+            raw.close()
+
+
+def mouse_pair(host: str, pos: str, code: str) -> int:
+    key = psk_from(code)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    ctx.set_ciphers("PSK")
+    ctx.set_psk_client_callback(lambda hint: (IDENTITY.decode(), key))
+    try:
+        tls = ctx.wrap_socket(socket.create_connection((host, MOUSE_PAIR_PORT), timeout=8), server_hostname=None)
+    except ssl.SSLError:
+        print("praxis-mouse: the code was not accepted", file=sys.stderr); return 4
+    except OSError as e:
+        print(f"praxis-mouse: cannot reach {host} ({e}) — is mouse sharing on there?", file=sys.stderr); return 3
+    tls.sendall(json.dumps({"fp": lm_fingerprint(), "name": socket.gethostname() or "praxis", "pos": pos}).encode())
+    resp = json.loads(tls.recv(4096).decode())
+    lm_add_peer(resp.get("name", host), host, pos, resp["fp"])
+    print(f"paired: {resp.get('name', host)} is on the {pos}")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(add_help=True)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -447,6 +582,14 @@ def main(argv: list[str]) -> int:
     c.add_argument("--listen", type=int, required=True)
     c.add_argument("--code", required=True)
     c.add_argument("--res", help="this screen, WxH@Hz, so the host matches it")
+    ml = sub.add_parser("mouse-listen")
+    ml.add_argument("--code", required=True)
+    mp = sub.add_parser("mouse-pair")
+    mp.add_argument("--host", required=True)
+    mp.add_argument("--pos", required=True, choices=sorted(OPPOSITE))
+    mp.add_argument("--code", required=True)
+    mf = sub.add_parser("mouse-forget")
+    mf.add_argument("--pos", required=True, choices=sorted(OPPOSITE))
     sub.add_parser("newcode")
     sub.add_parser("scan")
     a = ap.parse_args(argv)
@@ -454,6 +597,14 @@ def main(argv: list[str]) -> int:
         print(new_code()); return 0
     if a.cmd == "scan":
         print(json.dumps(scan()))
+        return 0
+    if a.cmd == "mouse-listen":
+        return mouse_listen(a.code)
+    if a.cmd == "mouse-pair":
+        return mouse_pair(a.host, a.pos, a.code)
+    if a.cmd == "mouse-forget":
+        cfg = lm_read()
+        lm_write(cfg["fps"], [c for c in cfg["clients"] if c.get("position", "").strip('"') != a.pos])
         return 0
     if a.cmd == "serve":
         return serve(a.listen, a.to, a.code, a.on_connect)

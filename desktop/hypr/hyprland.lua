@@ -89,6 +89,7 @@ hl.on("hyprland.start", function ()
   hl.exec_cmd("hypridle &")                           -- idle management: dim, lock, screen off, sleep
   hl.exec_cmd("blueman-applet &")                     -- Bluetooth authentication agent (PIN/passkey/pairing prompts)
   hl.exec_cmd("/usr/lib/polkit-kde-authentication-agent-1")  -- GUI auth prompts for root-only hardware toggles
+  hl.exec_cmd("praxis-mouse start")                  -- one mouse & keyboard across paired PCs, if switched on
 end)
 
 
@@ -362,7 +363,7 @@ hl.gesture({
     end
 })
 
--- 4-finger swipe up → Action / Notification Center (Windows Win+A); down → Voice typing (Windows Win+H)
+-- 4-finger swipe up → Action / Notification Center (Windows Win+A)
 hl.gesture({
     fingers = 4,
     direction = "up",
@@ -370,13 +371,9 @@ hl.gesture({
         hl.dispatch(hl.dsp.exec_cmd("quickshell ipc call shell toggle cc"))
     end
 })
-hl.gesture({
-    fingers = 4,
-    direction = "down",
-    action = function()
-        hl.dispatch(hl.dsp.exec_cmd("praxis-dictate"))
-    end
-})
+-- No swipe-down for voice typing: on a large touchpad a resting palm plus
+-- fingers registered as a 4-finger swipe and started dictation by itself.
+-- Super+H still starts it on purpose.
 
 -- 4-finger horizontal swipe → switch virtual desktop
 hl.gesture({

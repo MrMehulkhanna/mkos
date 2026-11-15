@@ -655,20 +655,55 @@ OverlayWindow {
                     }
                 }
 
+            }
+
+            // ── one mouse & keyboard across PCs ───────────────────────
+            // Not video: only the mouse and keys cross the network and the
+            // other PC draws its own pointer, so it moves exactly as smoothly
+            // as a mouse plugged into that PC.
+            Column {
+                width: parent.width; spacing: Theme.spaceMd
+                Text {
+                    text: "MOUSE & KEYBOARD  ·  one set for both PCs"
+                    color: Theme.muted
+                    font.family: Theme.font; font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold
+                    font.letterSpacing: 1.2
+                }
                 SettingRow {
-                    label: "Use this keyboard and mouse on the other PC (Experimental)"
-                    description: "Control the remote machine using Deskflow input sharing."
-                    Toggle {
-                        checked: Share.inputControl
-                        onToggled: v => {
-                            Share.inputControl = v
-                            if (!v && Share.inputSharing) {
-                                Share.stopInput()
-                            }
+                    label: "Share this mouse and keyboard"
+                    description: "Move the pointer off the edge of the screen and keep working on the other PC. A + S + D + F together brings it back."
+                    Toggle { checked: Share.mouseOn; onToggled: v => Share.mouseSet(v) }
+                }
+                Text {
+                    width: parent.width; wrapMode: Text.WordWrap
+                    text: "Left: " + (Share.mousePeers.left || "—") + "     Right: " + (Share.mousePeers.right || "—")
+                        + (Share.mouseMsg ? "     ·  " + Share.mouseMsg : "")
+                    color: Theme.text2
+                    font.family: Theme.font; font.pixelSize: Theme.fontSm
+                }
+                Repeater {
+                    model: Share.nearbyHosts.filter(h => !h.is_self)
+                    delegate: Row {
+                        required property var modelData
+                        spacing: Theme.spaceSm
+                        Text {
+                            width: 220; anchors.verticalCenter: parent.verticalCenter
+                            text: modelData.name + "  (" + modelData.ip + ")"
+                            color: Theme.text; elide: Text.ElideRight
+                            font.family: Theme.font; font.pixelSize: Theme.fontSm
                         }
+                        Btn { icon: "arrow-left"; label: "On my left"; onClicked: Share.mousePair(modelData.ip, "left") }
+                        Btn { icon: "arrow-right"; label: "On my right"; onClicked: Share.mousePair(modelData.ip, "right") }
                     }
                 }
+                Row {
+                    spacing: Theme.spaceSm
+                    visible: !!(Share.mousePeers.left || Share.mousePeers.right)
+                    Btn { visible: !!Share.mousePeers.left; icon: "x"; label: "Forget left"; onClicked: Share.mouseForget("left") }
+                    Btn { visible: !!Share.mousePeers.right; icon: "x"; label: "Forget right"; onClicked: Share.mouseForget("right") }
+                }
             }
+
 
             // ── live, only while it is ────────────────────────────────
             Column {

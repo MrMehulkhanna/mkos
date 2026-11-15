@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# praxis-mouse — use one mouse and keyboard across two Praxis PCs.
+#
+#   praxis-mouse on                 start sharing now and at every login
+#   praxis-mouse off                stop, and stay off
+#   praxis-mouse pair HOST left|right
+#                                   the other PC sits on that side of this one
+#   praxis-mouse forget left|right  drop the PC on that side
+#   praxis-mouse status
+#
+# Move the pointer off that edge of the screen and it carries on on the other
+# PC, keyboard included; come back the same way. A+S+D+F together releases it.
+#
+# Only input crosses the network — a few bytes per movement — and the other
+# PC draws its own pointer at its own refresh rate, so it feels like a mouse
+# plugged into that PC: no video, no delay to see. Built on lan-mouse
+# (github.com/feschber/lan-mouse), which captures at the screen edge through
+# the layer-shell protocol and types through wlroots virtual input, both of
+# which Hyprland supports. The pairing swap of certificate fingerprints runs
+# over the screen share's TLS-PSK link, so the same code protects both.
+set -euo pipefail
+
+STATE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/praxis-mouse"
+FLAG="$HOME/.config/praxis/mouse-on"
+LM_DIR="$HOME/.config/lan-mouse"
+# the same fixed code the screen share uses while pairing codes are off
+CODE="${PRAXIS_SHARE_CODE:-0000}"
+mkdir -p "$STATE"
+
+info() { printf '\033[36m•\033[0m %s\n' "$*"; }
+ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
+die()  { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+
+lm() { command -v lan-mouse || { [ -x "$HOME/.local/bin/lan-mouse" ] && echo "$HOME/.local/bin/lan-mouse"; } || true; }
+
+ensure_cert() {
+    [ -s "$LM_DIR/lan-mouse.pem" ] && return 0
+    mkdir -p "$LM_DIR"
+    [ -f "$LM_DIR/config.toml" ] || printf 'port = 4242\n' > "$LM_DIR/config.toml"
+    # lan-mouse writes its certificate the first time it starts
+    timeout 4 "$(lm)" --capture-backend layer-shell daemon >/dev/null 2>&1 || true
+    [ -s "$LM_DIR/lan-mouse.pem" ] || die "lan-mouse did not create its certificate"
+}
+
+running() { [ -f "$STATE/$1.pid" ] && kill -0 "$(cat "$STATE/$1.pid")" 2>/dev/null; }
+
+start() {
+    [ -n "$(lm)" ] || die "lan-mouse is not installed — run the Praxis update"
+    ensure_cert
+    if ! running daemon; then
+        # layer-shell capture: Hyprland's portal has no InputCapture, which
+        # lan-mouse would otherwise try first and get nothing from
+        setsid "$(lm)" --capture-backend layer-shell --emulation-backend wlroots daemon \
+            >"$STATE/daemon.log" 2>&1 &
+        echo $! > "$STATE/daemon.pid"
+    fi
+    if ! running listen; then
+        setsid praxis-share-gate mouse-listen --code "$CODE" >"$STATE/listen.log" 2>&1 &
+        echo $! > "$STATE/listen.pid"
+    fi
+}
+
+stop() {
+    local p
+    for p in daemon listen; do
+        running "$p" && kill "$(cat "$STATE/$p.pid")" 2>/dev/null || true
+        rm -f "$STATE/$p.pid"
+    done
+}
+
+case "${1:-status}" in
+    on)      mkdir -p "${FLAG%/*}"; touch "$FLAG"; start; ok "mouse & keyboard sharing on" ;;
+    off)     rm -f "$FLAG"; stop; ok "mouse & keyboard sharing off" ;;
+    start)   [ -f "$FLAG" ] && start || true ;;          # at login: only if switched on
+    restart)
+        running daemon && { kill "$(cat "$STATE/daemon.pid")" 2>/dev/null || true; rm -f "$STATE/daemon.pid"; sleep 0.5; }
+        [ -f "$FLAG" ] && start || true ;;
+    pair)
+        host="${2:-}"; pos="${3:-}"
+        [ -n "$host" ] && [[ "$pos" =~ ^(left|right|top|bottom)$ ]] || die "usage: praxis-mouse pair HOST left|right"
+        mkdir -p "${FLAG%/*}"; touch "$FLAG"
+        ensure_cert; start
+        praxis-share-gate mouse-pair --host "${host%%:*}" --pos "$pos" --code "$CODE"
+        "$0" restart; ok "move the pointer off the $pos edge to reach it" ;;
+    forget)
+        [[ "${2:-}" =~ ^(left|right|top|bottom)$ ]] || die "usage: praxis-mouse forget left|right"
+        praxis-share-gate mouse-forget --pos "$2"; "$0" restart; ok "forgot the PC on the $2" ;;
+    status)
+        if running daemon; then ok "on"; else info "off"; fi
+        grep -A3 '^\[\[clients\]\]' "$LM_DIR/config.toml" 2>/dev/null \
+            | grep -E 'position|hostname|ips' | paste - - - | sed 's/^/  /' || true ;;
+    *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

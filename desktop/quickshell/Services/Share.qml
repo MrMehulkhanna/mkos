@@ -106,6 +106,9 @@ if [ -f "$S/viewer.pids" ] && kill -0 "$(awk '{print $1}' "$S/viewer.pids" 2>/de
   echo "viewing=1"
   echo "viewTarget=$(cat "$S/viewer.target" 2>/dev/null)"
 fi
+M="$XDG_RUNTIME_DIR/praxis-mouse"
+if [ -f "$M/daemon.pid" ] && kill -0 "$(cat "$M/daemon.pid")" 2>/dev/null; then echo "mouseOn=1"; else echo "mouseOn=0"; fi
+echo "mousePeers=$(awk -F' = ' '/^position/{gsub(/"/,"",$2);p=$2} /^hostname/{gsub(/"/,"",$2);printf "%s:%s,",p,$2}' "$HOME/.config/lan-mouse/config.toml" 2>/dev/null)"
 if [ -f "$S/input.pid" ] && kill -0 "$(cat "$S/input.pid")" 2>/dev/null; then
   echo "inputSharing=1"
 else
@@ -136,6 +139,13 @@ fi
                     root.viewing = false
                 }
                 root.inputSharing = kv.inputSharing === "1"
+                root.mouseOn = kv.mouseOn === "1"
+                const peers = {}
+                for (const e of (kv.mousePeers || "").split(",")) {
+                    const j = e.indexOf(":")
+                    if (j > 0) peers[e.slice(0, j)] = e.slice(j + 1)
+                }
+                root.mousePeers = peers
             }
         }
     }
@@ -198,6 +208,35 @@ fi
         viewer.running = false
         root.viewing = false
         soon.start()
+    }
+    // ── one mouse & keyboard across PCs (praxis-mouse / lan-mouse) ────────
+    // Only input crosses the network and the other PC draws its own pointer,
+    // so it is as smooth as a mouse plugged into that PC.
+    property bool mouseOn:    false
+    property var  mousePeers: ({})         // {left: "omen", right: "mk"}
+    property string mouseMsg: ""
+    function mouseSet(on) {
+        Quickshell.execDetached(["praxis-mouse", on ? "on" : "off"])
+        root.mouseOn = on; soon.start()
+    }
+    function mousePair(host, pos) {
+        root.mouseMsg = "Pairing…"
+        mousePairProc.command = ["praxis-mouse", "pair", host, pos]
+        mousePairProc.running = true
+    }
+    function mouseForget(pos) {
+        Quickshell.execDetached(["praxis-mouse", "forget", pos]); soon.start()
+    }
+    Process {
+        id: mousePairProc
+        stdout: StdioCollector { id: mpOut }
+        stderr: StdioCollector { id: mpErr }
+        onExited: (code) => {
+            root.mouseMsg = code === 0 ? "Paired — move the pointer off that edge."
+                : ((mpErr.text || "").split("\n").filter(l => l).pop() || "Could not pair.")
+                    .replace(/\x1b\[[0-9;]*m/g, "").replace(/^praxis-mouse: /, "")
+            soon.start()
+        }
     }
     function startInput(peer) {
         Quickshell.execDetached(["praxis-share", "input", "host", "--peer", peer || "praxis-peer"])
