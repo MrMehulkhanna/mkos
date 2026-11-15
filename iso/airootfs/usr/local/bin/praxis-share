@@ -402,8 +402,19 @@ m=[m for m in json.load(sys.stdin) if m["name"]==sys.argv[1]][0]; print(m["width
     # visibly broke up and rebuilt — the "bursting pixels". The VBV buffer
     # holds 8 frames, so a keyframe can be big enough to arrive sharp; on a
     # LAN it drains in a few milliseconds.
-    setsid wf-recorder -y -D -o "$mon" -c rawvideo -m rawvideo -x bgr0 -f "$FIFO" \
-        >"$STATE_DIR/capture.log" 2>&1 &
+    # wf-recorder quits whenever its screen is reconfigured — moving it in
+    # the Arrange view did that, and the far screen went black. So capture
+    # runs in a loop that starts it again at once, and the loop holds the
+    # FIFO open itself so the encoder never sees end-of-stream in between.
+    # Raw frames are whole frames, so the restarted capture lines up again.
+    setsid bash -c '
+        exec 7<>"$1"
+        trap "kill \$c 2>/dev/null; exit 0" INT TERM
+        while :; do
+            wf-recorder -y -D -o "$2" -c rawvideo -m rawvideo -x bgr0 -f "$1" & c=$!
+            wait $c
+            sleep 0.2
+        done' capture "$FIFO" "$mon" >"$STATE_DIR/capture.log" 2>&1 &
     echo $! > "$PID_FILE"
     local -a audio=()
     if [ "$WITH_AUDIO" = 1 ]; then
