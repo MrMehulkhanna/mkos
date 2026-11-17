@@ -1,6 +1,6 @@
-# 🚀 Praxis Linux — Complete Installation Guide
+# 🚀 MKOS Linux — Complete Installation Guide
 
-Welcome to the official installation guide for **Praxis Linux**. This guide walks you through every stage of the installation process — from preparing your installation media to booting into your new desktop.
+Welcome to the official installation guide for **MKOS Linux**. This guide walks you through every stage of the installation process — from preparing your installation media to booting into your new desktop.
 
 ---
 
@@ -9,7 +9,7 @@ flowchart TD
     A["1. Prepare USB / SSD"] --> B["2. BIOS / UEFI Setup (Disable Secure Boot)"]
     B --> C["3. Boot Live Environment"]
     C --> D["4. Connect to Wi-Fi / Internet"]
-    D --> E["5. Launch Praxis Installer"]
+    D --> E["5. Launch MKOS Installer"]
     E --> F{"Choose Install Mode"}
     F -->|Alongside Windows| G["Automatic NTFS Shrink"]
     F -->|Entire Disk| H["Format & Clean Install"]
@@ -18,7 +18,7 @@ flowchart TD
     H --> J
     I --> J
     J --> K["Kernel & Bootloader Setup (GRUB + EFI)"]
-    K --> L["Reboot into Praxis Linux Desktop"]
+    K --> L["Reboot into MKOS Linux Desktop"]
 ```
 
 ---
@@ -52,14 +52,14 @@ flowchart TD
 ## Step 1: Download & Flash the Media
 
 ### 1. Download the ISO
-Download the latest `praxis-*.iso` from the [GitHub Releases](https://github.com/MrMehulkhanna/praxis/releases) page.
+Download the latest `mkos-*.iso` from the [GitHub Releases](https://github.com/MrMehulkhanna/mkos/releases) page.
 
 ### 2. Flash to a USB Drive or External SSD
 You can write the ISO using the built-in flasher or any standard tool:
 
 #### On Linux (Recommended):
 ```bash
-bash iso/flash.sh praxis-2026.10.19-x86_64.iso /dev/sdX
+bash iso/flash.sh mkos-2026.10.19-x86_64.iso /dev/sdX
 ```
 *(The script verifies checksums byte-for-byte upon completion).*
 
@@ -94,12 +94,12 @@ Tap your PC's **Boot Menu Key** during startup:
 
 Select your USB/SSD drive in **UEFI mode**.
 
-The live environment will boot straight into the **Praxis desktop** powered by **Hyprland** and **Quickshell**.
+The live environment will boot straight into the **MKOS desktop** powered by **Hyprland** and **Quickshell**.
 
 > [!NOTE]
 > **Live Session Credentials** (if prompted):  
-> - Username: `praxis`  
-> - Password: `praxis`  
+> - Username: `mkos`  
+> - Password: `mkos`  
 > *(Passwordless `sudo` is enabled in the live environment)*.
 
 ---
@@ -120,13 +120,13 @@ An internet connection is required during installation to fetch the latest syste
 ## Step 5: Run the Installer
 
 You can launch the installer in two ways:
-1. **Graphical Installer**: Click the **"Install Praxis Linux"** icon in the dock or run:
+1. **Graphical Installer**: Click the **"Install MKOS Linux"** icon in the dock or run:
    ```bash
-   praxis-installer
+   mkos-installer
    ```
 2. **Terminal Text Installer** (for lightweight or headless installs):
    ```bash
-   praxis-install
+   mkos-install
    ```
 
 ---
@@ -137,8 +137,8 @@ The installer automatically detects existing operating systems and disks:
 
 ### Option A: Install Alongside Windows (Dual Boot)
 - Automatically checks NTFS partition health and BitLocker status.
-- Adjust the slider to choose how much space to give Praxis (minimum 30 GiB).
-- Praxis safely shrinks Windows, creates Linux partitions in the freed space, and preserves all your Windows files!
+- Adjust the slider to choose how much space to give MKOS (minimum 30 GiB).
+- MKOS safely shrinks Windows, creates Linux partitions in the freed space, and preserves all your Windows files!
 - Configures hardware clock synchronization so Windows and Linux never disagree on the time.
 
 ### Option B: Wipe Entire Disk (Clean Install)
@@ -168,7 +168,7 @@ The installer runs fully unattended once choices are confirmed:
 
 ## Step 8: First Boot & Desktop Tour
 
-Remove the USB/SSD and turn on your PC. It will boot directly into **Praxis Linux**:
+Remove the USB/SSD and turn on your PC. It will boot directly into **MKOS Linux**:
 
 ### 🌟 Desktop Highlights & Built-in Features:
 
@@ -186,10 +186,10 @@ Remove the USB/SSD and turn on your PC. It will boot directly into **Praxis Linu
   - Press `Super + H` anywhere, speak naturally, and local Whisper AI types your text directly into any focused window!
 * **Command Palette (`Super + Space`)**:
   - Quick launcher for applications, system tools, web searches, and calculations.
-* **System Doctor (`praxis-doctor`)**:
-  - Run `praxis-doctor` in terminal to run complete automated diagnostics on your system health.
-* **Rolling System Updater (`praxis-update`)**:
-  - Open Settings → Click **"Update System"** (or run `praxis-update` in terminal).
+* **System Doctor (`mkos-doctor`)**:
+  - Run `mkos-doctor` in terminal to run complete automated diagnostics on your system health.
+* **Rolling System Updater (`mkos-update`)**:
+  - Open Settings → Click **"Update System"** (or run `mkos-update` in terminal).
   - Updates system packages, pulls latest features from GitHub, and hot-reloads desktop with **zero password prompts**!
 
 ---
@@ -199,11 +199,11 @@ Remove the USB/SSD and turn on your PC. It will boot directly into **Praxis Linu
 ### HP Laptops: Setting GRUB Boot Priority
 On some HP laptops, Windows Boot Manager may try to override GRUB on the first boot:
 1. Power on and immediately tap **F9** to open the Boot Menu.
-2. Select **Praxis** (or select **"Boot From EFI File"** → `EFI/Praxis/grubx64.efi`).
-3. Once booted into Praxis, run:
+2. Select **MKOS** (or select **"Boot From EFI File"** → `EFI/MKOS/grubx64.efi`).
+3. Once booted into MKOS, run:
    ```bash
    sudo efibootmgr
-   sudo cp /boot/efi/EFI/Praxis/grubx64.efi /boot/efi/EFI/BOOT/BOOTX64.EFI
+   sudo cp /boot/efi/EFI/MKOS/grubx64.efi /boot/efi/EFI/BOOT/BOOTX64.EFI
    ```
    This permanently sets GRUB as the fallback bootloader.
 
@@ -211,11 +211,11 @@ On some HP laptops, Windows Boot Manager may try to override GRUB on the first b
 Acer laptops require manual trusting of new UEFI executables:
 1. In BIOS (`F2`), set a **Supervisor Password** under the Security tab.
 2. Select **"Select an UEFI file as trusted for executing"**.
-3. Choose `HDD0` → `EFI` → `Praxis` → `grubx64.efi`.
-4. Name it `Praxis`, save (`F10`), and restart.
+3. Choose `HDD0` → `EFI` → `MKOS` → `grubx64.efi`.
+4. Name it `MKOS`, save (`F10`), and restart.
 
 ### Dedicated NVIDIA GPUs:
-If booting with a dedicated NVIDIA GPU on a desktop or hybrid laptop, Praxis automatically loads `nvidia-open` or `nouveau`. If launching manually from TTY:
+If booting with a dedicated NVIDIA GPU on a desktop or hybrid laptop, MKOS automatically loads `nvidia-open` or `nouveau`. If launching manually from TTY:
 ```bash
 Hyprland
 ```

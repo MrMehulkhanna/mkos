@@ -4,7 +4,7 @@ import "root:/Config"
 import "root:/Services"
 import "root:/components"
 
-// System update — the same work praxis-update always did, with somewhere to
+// System update — the same work mkos-update always did, with somewhere to
 // watch it happen. Progress is the current section heading rather than a
 // guessed percentage, because the script knows what it is doing and a fake
 // bar would only be a lie that moves.
@@ -238,7 +238,7 @@ OverlayWindow {
                 }
                 Text {
                     anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                    text: "no password needed · runs praxis-update"
+                    text: "no password needed · runs mkos-update"
                     color: Theme.muted
                     font.family: Theme.font; font.pixelSize: Theme.fontXs
                 }

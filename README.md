@@ -1,13 +1,13 @@
-<p align="center"><img src="docs/assets/praxis.svg" width="76" alt=""></p>
-<h1 align="center">Praxis</h1>
+<p align="center"><img src="docs/assets/mkos.svg" width="76" alt=""></p>
+<h1 align="center">MKOS</h1>
 <p align="center"><i>Knowledge, put into action.</i></p>
 
 <p align="center">
-  <a href="https://github.com/MrMehulkhanna/praxis/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/MrMehulkhanna/praxis/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/MrMehulkhanna/mkos/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/MrMehulkhanna/mkos/actions/workflows/ci.yml/badge.svg"></a>
 </p>
 
 <p align="center">
-  <a href="https://mrmehulkhanna.github.io/praxis/"><b>Website</b></a> ·
+  <a href="https://mrmehulkhanna.github.io/mkos/"><b>Website</b></a> ·
   <a href="#install-it">Install</a> ·
   <a href="#everything-it-does">Everything it does</a> ·
   <a href="#shortcuts">Shortcuts</a> ·
@@ -31,7 +31,7 @@ become an operating system. This is that — an Arch Linux desktop where the AI
 is a system service instead of an application, built by one person, in the
 open, on the machine described above.
 
-<p align="center"><img src="docs/screenshots/launcher.png" width="760" alt="The Praxis launcher: one box that searches apps, controls the PC, or asks the AI"></p>
+<p align="center"><img src="docs/screenshots/launcher.png" width="760" alt="The MKOS launcher: one box that searches apps, controls the PC, or asks the AI"></p>
 <p align="center"><sub>Tap <code>Super</code>. One box searches apps, controls the machine, or asks the AI.</sub></p>
 
 ## The problems, and what each one became
@@ -79,7 +79,7 @@ last thing to go, not the first.
 ### "Brightness keys do nothing"
 
 This laptop exposes two backlight devices and only one drives the panel.
-Praxis finds the real one and uses it for the keys, the slider and idle
+MKOS finds the real one and uses it for the keys, the slider and idle
 dimming alike.
 
 There was a second bug underneath that one, worth repeating because it is
@@ -95,7 +95,7 @@ compositor was driving it through the sRGB preset at 8 bits — the narrowest
 pipeline it has.
 
 ```console
-$ praxis-display color 130 115      # wide gamut, 10-bit, brightness and saturation
+$ mkos-display color 130 115      # wide gamut, 10-bit, brightness and saturation
 ```
 
 Ten-bit matters most here: 8-bit banding shows worst in the near-blacks that
@@ -105,7 +105,7 @@ OLED is supposed to be good at.
 
 It suspends now. The rule had been written into the live ISO but never
 installed onto the systems it produced, so every install ran on systemd's
-defaults and laptops sat awake in bags. `praxis doctor` checks for it.
+defaults and laptops sat awake in bags. `mkos doctor` checks for it.
 
 ### "Updates hang forever"
 
@@ -121,7 +121,7 @@ it says so and offers to restart, naming which.
 
 ### "I want my other laptop to be a second screen"
 
-Two Praxis PCs on the same network (or one Ethernet cable between them) can
+Two MKOS PCs on the same network (or one Ethernet cable between them) can
 work as one desk. Four pieces, each usable on its own, all in
 `Super+Shift+D` (the Share screen window) and Settings:
 
@@ -161,7 +161,7 @@ in a file manager copies them where you want.
 several speakers, in sync*: tick two or more (laptop, monitor, Bluetooth) and
 press *Play together*. PipeWire holds the faster ones back to match the
 slowest. While a screen share sends sound, this PC's speakers wait for the
-viewer's so they do not echo — tune it with `praxis-share audio-delay MS`.
+viewer's so they do not echo — tune it with `mkos-share audio-delay MS`.
 
 #### Moving things around yourself
 
@@ -180,7 +180,7 @@ viewer's so they do not echo — tune it with `praxis-share audio-delay MS`.
   college Wi-Fi often blocks devices from reaching each other ("client
   isolation") — then nothing can connect, whatever the app.
 - **Ethernet cable (best):** plug one straight between the laptops. Each
-  Praxis PC tries a router first and falls back to a direct link address
+  MKOS PC tries a router first and falls back to a direct link address
   after 8 seconds, so they find each other with no settings. A cable gives
   the most bitrate and the steadiest delay. A plain USB-C to USB-C cable
   does *not* network two laptops; only Thunderbolt/USB4 on both ends would.
@@ -188,7 +188,7 @@ viewer's so they do not echo — tune it with `praxis-share audio-delay MS`.
 **Security, honestly:** pairing codes are switched **off** while this is
 being tuned — anyone on the same network can view a shared screen or pair
 for mouse sharing while those are on. The link is still encrypted
-(TLS-PSK). `PRAXIS_SHARE_PIN=1` brings the four-digit code back; it will be
+(TLS-PSK). `MKOS_SHARE_PIN=1` brings the four-digit code back; it will be
 the default again.
 
 <p align="center"><img src="docs/screenshots/share-screen.png" width="760" alt="The Share screen window: displays drawn in perspective, with the one being sent lit up"></p>
@@ -205,20 +205,20 @@ the build fails. The partition table is backed up and a dry run happens first.
 
 ## Install it
 
-**1. Get the ISO.** Download it from [Releases](https://github.com/MrMehulkhanna/praxis/releases)
+**1. Get the ISO.** Download it from [Releases](https://github.com/MrMehulkhanna/mkos/releases)
 (~2 GB — models and drivers are bundled so the install works with no network),
 or build it yourself on any Arch machine:
 
 ```bash
-bash iso/build.sh          # writes praxis-YYYY.MM.DD-x86_64.iso
+bash iso/build.sh          # writes mkos-YYYY.MM.DD-x86_64.iso
 ```
 
 **2. Write it to a USB stick.** The script refuses anything that is not a USB
 disk, and reads the result back to verify it:
 
 ```bash
-bash iso/flash.sh praxis-*.iso            # it will ask which disk
-bash iso/flash.sh praxis-*.iso /dev/sdb   # or name one
+bash iso/flash.sh mkos-*.iso            # it will ask which disk
+bash iso/flash.sh mkos-*.iso /dev/sdb   # or name one
 ```
 
 **3. Boot it.** Open the firmware boot menu — usually `F12`, `F9`, `Esc` or
@@ -226,7 +226,7 @@ bash iso/flash.sh praxis-*.iso /dev/sdb   # or name one
 The live desktop starts on its own, so you can use the whole system, test
 your wi-fi and your graphics, and change your mind before touching the disk.
 
-**4. Install, if you want to.** Click **Install Praxis** in the dock. It asks
+**4. Install, if you want to.** Click **Install MKOS** in the dock. It asks
 four things: where to put it, your name and password, whether to log in
 automatically, and which app bundles you want.
 
@@ -250,14 +250,14 @@ Partitioning, dual-boot details and hardware notes:
 
 ### Updating
 
-**Settings › Update**, or `praxis-update` from a terminal. The update window compares your
+**Settings › Update**, or `mkos-update` from a terminal. The update window compares your
 current commit against upstream, lists incoming changes, keeps packages in sync with the
 desktop set, and safely updates shell and window manager configurations while preserving your
-machine-specific overrides (`praxis-local.lua`, `settings.json`). Anything that needs a reboot
+machine-specific overrides (`mkos-local.lua`, `settings.json`). Anything that needs a reboot
 displays a restart banner with a one-click restart button. Or from a clean shell:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/MrMehulkhanna/praxis/main/iso/airootfs/usr/local/bin/praxis-update | bash
+curl -sL https://raw.githubusercontent.com/MrMehulkhanna/mkos/main/iso/airootfs/usr/local/bin/mkos-update | bash
 ```
 
 ### First keys to try
@@ -282,7 +282,7 @@ The sections above are the reasons each piece exists. This is the whole list.
 | | |
 |---|---|
 | **Ask anything** | `Super+I` from anywhere. For system questions the agent gathers real diagnostics first — temperatures, processes, GPU state, logs — and answers from those. |
-| **Runs on your hardware** | llama.cpp on NVIDIA (CUDA), AMD and Intel (Vulkan), or the CPU. `praxis-models recommend` picks models that fit your GPU; one click downloads from Hugging Face. |
+| **Runs on your hardware** | llama.cpp on NVIDIA (CUDA), AMD and Intel (Vulkan), or the CPU. `mkos-models recommend` picks models that fit your GPU; one click downloads from Hugging Face. |
 | **Voice typing** | `Super+H`, speak, `Super+H`. Transcribed locally with Whisper into whatever has focus — browser, editor, chat, terminal. Four-finger swipe down does the same. |
 | **Speak a command** | `Super+Shift+H` turns speech into a terminal command and types it for you to read. Never run behind your back. |
 | **Read the screen** | `Super+Shift+O` copies any text you can see — images, video frames, PDFs, error dialogs. `ai see shot.png "what's wrong?"` explains a picture. |
@@ -318,7 +318,7 @@ The sections above are the reasons each piece exists. This is the whole list.
 | **Task manager** | `Ctrl+Shift+Esc` — CPU *and* GPU use per process, with a stop button for running AI jobs. |
 | **Tools** | Clipboard history `Super+Shift+V`, emoji `Super+.`, colour picker `Super+Shift+C`, screen recorder `Super+Shift+R`, notes `Super+N`, screenshot `Print`. |
 | **Wallpapers** | Thirteen original stills and three seamless live ones, decoded on the integrated GPU so the discrete card can idle. |
-| **Two PCs, one desk** | `Super+Shift+D` — another Praxis PC as an extra monitor (4:4:4, ~50 ms), one mouse and keyboard across both, a shared clipboard (text, images, files), and drag-to-arrange in Settings → Display. Wi-Fi or one Ethernet cable. |
+| **Two PCs, one desk** | `Super+Shift+D` — another MKOS PC as an extra monitor (4:4:4, ~50 ms), one mouse and keyboard across both, a shared clipboard (text, images, files), and drag-to-arrange in Settings → Display. Wi-Fi or one Ethernet cable. |
 | **Speakers** | Settings → Sound — play on several speakers at once, in sync. |
 | **Settings** | Wi-fi, bluetooth, audio, displays, dock, power, date and time, appearance, shortcuts, AI models, and a Health page — one window. |
 
@@ -329,7 +329,7 @@ The sections above are the reasons each piece exists. This is the whole list.
 | | |
 |---|---|
 | **Drivers chosen for you** | CPU microcode and GPU drivers picked from PCI IDs at install — Intel, AMD, NVIDIA, hybrid laptops and older cards. |
-| **Brightness that works** | Many laptops expose two backlight devices where one is a decoy. Praxis finds the real one and uses it for keys, slider and idle dimming alike. |
+| **Brightness that works** | Many laptops expose two backlight devices where one is a decoy. MKOS finds the real one and uses it for keys, slider and idle dimming alike. |
 | **OLED colour** | Wide gamut and 10-bit on panels that support it, with brightness and saturation as percentages, plus burn-in protection that dims and locks on a timer. |
 | **Displays without fear** | Change resolution, refresh rate or scale; anything you do not confirm within 15 seconds reverts itself. Kept settings survive a restart. |
 | **Bluetooth** | A built-in agent handles passkey and PIN confirmation over D-Bus, including while Do Not Disturb is on. |
@@ -370,9 +370,9 @@ $ ai rag add ~/notes; ai rag q "…"    # ask your own documents
 $ ai model list | ai model auto       # choose or auto-route models
 $ ai usage                            # tokens, time and cost per model
 $ ai logs -f                          # watch the service work
-$ praxis doctor --fix                 # health check, then the fixes that are safe
-$ praxis-share extend                 # send a display to another machine
-$ praxis-display color 130 115        # OLED wide gamut, brightness and saturation
+$ mkos doctor --fix                 # health check, then the fixes that are safe
+$ mkos-share extend                 # send a display to another machine
+$ mkos-display color 130 115        # OLED wide gamut, brightness and saturation
 ```
 
 Editors and other tools reach the same models through an OpenAI-compatible
@@ -396,7 +396,7 @@ first.
 - Secure Boot must be off.
 - Back up anything you cannot lose before installing, as with any young OS.
 
-An issue with `praxis doctor` output attached is the fastest route to a fix.
+An issue with `mkos doctor` output attached is the fastest route to a fix.
 
 ## How it works
 
@@ -412,7 +412,7 @@ flowchart LR
     voice[Voice]:::s
     ide[Editors via /v1]:::s
   end
-  shell & cli & voice & ide --> api[Praxis AI service]
+  shell & cli & voice & ide --> api[MKOS AI service]
   api --> router[router<br/>task → model]
   router --> gate[budget gate]
   gate --> ctx[context engine<br/>FTS5 + vectors]
@@ -480,7 +480,7 @@ bash iso/build.sh                                    # the ISO
 sudo iso/test-install.sh alongside-btrfs wipe-ext4   # real installs, booted in QEMU
 ```
 
-`praxis doctor` names anything missing. Issues and pull requests welcome.
+`mkos doctor` names anything missing. Issues and pull requests welcome.
 
 ---
 
@@ -488,4 +488,4 @@ MIT — see [`LICENSE`](LICENSE). Built on Arch Linux, Hyprland, Quickshell,
 llama.cpp, Whisper and PipeWire, each under its own license, none of them
 affiliated with this.
 
-<p align="center"><sub><a href="https://mrmehulkhanna.github.io/praxis/">praxis website</a> · made by <a href="https://github.com/MrMehulkhanna">Mehul Khanna</a></sub></p>
+<p align="center"><sub><a href="https://mrmehulkhanna.github.io/mkos/">mkos website</a> · made by <a href="https://github.com/MrMehulkhanna">Mehul Khanna</a></sub></p>

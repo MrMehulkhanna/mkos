@@ -35,7 +35,7 @@ Singleton {
 
     Process {
         id: touchpadProbe
-        command: ["praxis-touchpad", "status"]
+        command: ["mkos-touchpad", "status"]
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
@@ -54,30 +54,30 @@ Singleton {
 
     function setTouchpadSensitivity(v) {
         root.touchpadSensitivity = v
-        Quickshell.execDetached(["praxis-touchpad", "set-sensitivity", v.toFixed(2)])
+        Quickshell.execDetached(["mkos-touchpad", "set-sensitivity", v.toFixed(2)])
     }
     function setTouchpadScrollFactor(v) {
         root.touchpadScrollFactor = v
-        Quickshell.execDetached(["praxis-touchpad", "set-scroll-factor", v.toFixed(2)])
+        Quickshell.execDetached(["mkos-touchpad", "set-scroll-factor", v.toFixed(2)])
     }
     function setTouchpadNaturalScroll(v) {
         root.touchpadNaturalScroll = v
-        Quickshell.execDetached(["praxis-touchpad", "set-natural-scroll", v ? "true" : "false"])
+        Quickshell.execDetached(["mkos-touchpad", "set-natural-scroll", v ? "true" : "false"])
     }
     function setTouchpadTapToClick(v) {
         root.touchpadTapToClick = v
-        Quickshell.execDetached(["praxis-touchpad", "set-tap-to-click", v ? "true" : "false"])
+        Quickshell.execDetached(["mkos-touchpad", "set-tap-to-click", v ? "true" : "false"])
     }
     function setTouchpadTapAndDrag(v) {
         root.touchpadTapAndDrag = v
-        Quickshell.execDetached(["praxis-touchpad", "set-tap-and-drag", v ? "true" : "false"])
+        Quickshell.execDetached(["mkos-touchpad", "set-tap-and-drag", v ? "true" : "false"])
     }
     function setDeviceSensitivity(devName, v) {
-        Quickshell.execDetached(["praxis-touchpad", "set-device", devName, v.toFixed(2)])
+        Quickshell.execDetached(["mkos-touchpad", "set-device", devName, v.toFixed(2)])
         refreshTouchpadsLater.start()
     }
     function resetDevice(devName) {
-        Quickshell.execDetached(["praxis-touchpad", "reset-device", devName])
+        Quickshell.execDetached(["mkos-touchpad", "reset-device", devName])
         refreshTouchpadsLater.start()
     }
 

@@ -1,9 +1,9 @@
-# Praxis — the desktop package set, added on top of archiso's `releng` base
+# MKOS — the desktop package set, added on top of archiso's `releng` base
 # (linux, linux-firmware, microcode, parted, gptfdisk, iwd, openssh, …;
 # build.sh drops releng's rescue-only extras).
 #
-# Everything ABOVE the "@live-only" line is the Praxis desktop: the live
-# session runs it, and praxis-install installs exactly this set on the target
+# Everything ABOVE the "@live-only" line is the MKOS desktop: the live
+# session runs it, and mkos-install installs exactly this set on the target
 # (plus the base system, build tools and the drivers for the target's own
 # GPU), so an installed system matches what you tried live.
 # One package per line; blank lines and comments are ignored.
@@ -84,7 +84,7 @@ ntfs-3g
 ntfsprogs
 libnewt
 
-# ── Praxis tools (praxis-top and the AIOS scripts need python) ───────────
+# ── MKOS tools (mkos-top and the AIOS scripts need python) ───────────
 python
 jq
 wget
@@ -100,7 +100,7 @@ noto-fonts-emoji
 ttf-jetbrains-mono
 ttf-nerd-fonts-symbols-mono
 
-# @live-only ─ hardware coverage for the live session. praxis-install does not
+# @live-only ─ hardware coverage for the live session. mkos-install does not
 # copy these: it detects the target's real GPU and installs only its drivers.
 mesa
 vulkan-intel

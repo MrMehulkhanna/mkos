@@ -1,5 +1,5 @@
 /**
- * Praxis Linux (AIOS) — 3D Interactive WebGL Experience
+ * MKOS Linux (AIOS) — 3D Interactive WebGL Experience
  * Built with Three.js — Ultra-fluid 60fps rendering, dynamic lighting,
  * holographic glass cards, glowing AI core orb, interactive keyboard backlighting,
  * and mouse/touch parallax with camera preset switching.
@@ -178,7 +178,7 @@
     ctx.fillStyle = '#58e1ff';
     ctx.font = 'bold 15px "JetBrains Mono", monospace';
     const cpuVal = 3 + (simTick % 4);
-    ctx.fillText(`PRAXIS AIOS  ::  CPU ${cpuVal}%  |  RAM 2.4G  |  VRAM 1.8G  |  120Hz`, 24, 26);
+    ctx.fillText(`MKOS AIOS  ::  CPU ${cpuVal}%  |  RAM 2.4G  |  VRAM 1.8G  |  120Hz`, 24, 26);
     ctx.fillStyle = '#cbd5e1';
     ctx.fillText('⚡ 100%   📶 Wi-Fi 6   22:30', 820, 26);
 
@@ -206,7 +206,7 @@
       ctx.fillRect(65, 300, 12, 20);
     }
 
-    // Second tiled window — Praxis AI Assistant Card
+    // Second tiled window — MKOS AI Assistant Card
     ctx.fillStyle = 'rgba(25, 22, 44, 0.76)';
     ctx.strokeStyle = 'rgba(139, 92, 246, 0.45)';
     ctx.roundRect(645, 68, 340, 520, 12);
@@ -215,7 +215,7 @@
 
     ctx.fillStyle = '#c4b5fd';
     ctx.font = 'bold 18px "Inter", sans-serif';
-    ctx.fillText('Praxis Assistant', 670, 110);
+    ctx.fillText('MKOS Assistant', 670, 110);
     ctx.fillStyle = '#94a3b8';
     ctx.font = '14px "Inter", sans-serif';
     ctx.fillText('Super+H: Voice Dictate', 670, 155);
@@ -401,7 +401,7 @@
   window.addEventListener('touchend', onPointerUp, { passive: true });
 
   // Camera Presets API for UI Buttons
-  window.setPraxis3DView = function (preset) {
+  window.setMKOS3DView = function (preset) {
     autoSpin = false;
     if (preset === 'front') {
       targetRotationX = 0.05;
@@ -418,7 +418,7 @@
     }
   };
 
-  window.togglePraxisAutoSpin = function () {
+  window.toggleMKOSAutoSpin = function () {
     autoSpin = !autoSpin;
     return autoSpin;
   };

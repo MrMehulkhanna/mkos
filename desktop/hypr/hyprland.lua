@@ -1,6 +1,6 @@
 
 -- ============================================================================
---  Praxis Linux — Hyprland Configuration
+--  MKOS Linux — Hyprland Configuration
 -- ============================================================================
 
 hl.config({
@@ -42,13 +42,13 @@ hl.config({
 -- the mode and scale and nothing else. They have to name a real output, and
 -- the output name differs per machine.
 --
---   praxis-display color 130 115   wide gamut, 10-bit, brightness and
+--   mkos-display color 130 115   wide gamut, 10-bit, brightness and
 --                                  saturation as percentages
---   praxis-display color off       back to plain sRGB at 8 bits
---   praxis-display color show      what each panel is being driven at
+--   mkos-display color off       back to plain sRGB at 8 bits
+--   mkos-display color show      what each panel is being driven at
 --
 -- It detects OLED panels from their EDID and writes one rule per panel into
--- ~/.config/hypr/praxis-local.lua, which is required below.
+-- ~/.config/hypr/mkos-local.lua, which is required below.
 hl.monitor({
     output   = "",
     mode     = "preferred",
@@ -80,17 +80,17 @@ hl.on("hyprland.start", function ()
   -- "Ask for my password when the computer starts" (installer / Settings): the
   -- desktop starts behind the lock screen
   -- (not "[ -e … ]": Hyprland reads a leading "[…]" as exec rules)
-  hl.exec_cmd("test -e ~/.config/praxis/lock-at-login && exec hyprlock")
+  hl.exec_cmd("test -e ~/.config/mkos/lock-at-login && exec hyprlock")
   hl.exec_cmd("quickshell -d -p ~/.config/quickshell/shell.qml")
   hl.exec_cmd("systemctl --user start swaync.service")  -- notifications (drawn in software: never wakes the NVIDIA GPU)
   hl.exec_cmd("hyprpaper &")                          -- wallpaper (config: ~/.config/hypr/hyprpaper.conf)
   hl.exec_cmd("systemctl --user start aios.service")  -- local AI backend
-  hl.exec_cmd("praxis-clipboard watch")               -- clipboard history (Super+Shift+V)
+  hl.exec_cmd("mkos-clipboard watch")               -- clipboard history (Super+Shift+V)
   hl.exec_cmd("hypridle &")                           -- idle management: dim, lock, screen off, sleep
   hl.exec_cmd("blueman-applet &")                     -- Bluetooth authentication agent (PIN/passkey/pairing prompts)
   hl.exec_cmd("/usr/lib/polkit-kde-authentication-agent-1")  -- GUI auth prompts for root-only hardware toggles
-  hl.exec_cmd("praxis-mouse start")                  -- one mouse & keyboard across paired PCs, if switched on
-  hl.exec_cmd("praxis-audio restore")                -- several speakers together, if chosen
+  hl.exec_cmd("mkos-mouse start")                  -- one mouse & keyboard across paired PCs, if switched on
+  hl.exec_cmd("mkos-audio restore")                -- several speakers together, if chosen
 end)
 
 
@@ -155,7 +155,7 @@ hl.config({
 
         border_size = 2,
 
-        -- Praxis blue -> purple, the same accents Config/Theme.qml uses for the
+        -- MKOS blue -> purple, the same accents Config/Theme.qml uses for the
         -- shell. These were still Hyprland's stock cyan/green sample gradient,
         -- which made a themed desktop look like an untouched default config.
         col = {
@@ -304,7 +304,7 @@ hl.config({
 hl.config({
     misc = {
         -- What shows if no wallpaper program is drawing (e.g. hyprpaper failed):
-        -- a plain Praxis-dark background, not Hyprland's logo and splash text.
+        -- a plain MKOS-dark background, not Hyprland's logo and splash text.
         force_default_wallpaper  = 0,
         disable_hyprland_logo    = true,
         disable_splash_rendering = true,
@@ -369,7 +369,7 @@ hl.gesture({
     fingers = 3,
     direction = "down",
     action = function()
-        hl.dispatch(hl.dsp.exec_cmd("praxis-win show-desktop"))
+        hl.dispatch(hl.dsp.exec_cmd("mkos-win show-desktop"))
     end
 })
 
@@ -417,7 +417,7 @@ hl.bind(mainMod .. " + V", hl.dsp.window.float({ action = "toggle" }), { descrip
 hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(menu), { description = "Apps: App menu" })
 hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("pidof hyprlock || hyprlock"), { description = "System: Lock screen" })  -- lock screen (|| guard: never stack lockers)
 -- Super+D → Show Desktop (toggle minimize/reveal wallpaper, as on Windows)
-hl.bind(mainMod .. " + D", hl.dsp.exec_cmd("praxis-win show-desktop"), { description = "Windows: Show desktop (toggle all windows)" })
+hl.bind(mainMod .. " + D", hl.dsp.exec_cmd("mkos-win show-desktop"), { description = "Windows: Show desktop (toggle all windows)" })
 -- Super+Tab → workspace overview (grid of all 12); rofi window switcher moved to Super+Shift+Tab
 hl.bind(mainMod .. " + TAB",         hl.dsp.exec_cmd("quickshell ipc call shell toggle ws"), { description = "Workspaces: Overview of all workspaces" })
 hl.bind(mainMod .. " + SHIFT + TAB", hl.dsp.exec_cmd("rofi -show window"), { description = "Windows: Switch between windows" })
@@ -437,69 +437,69 @@ hl.bind(mainMod .. " + SHIFT + Z", hl.dsp.workspace.toggle_special("minimized"),
 
 -- ── Quickshell panel shortcuts (Alphabet keys) ─────────────────────────
 -- Super+Escape → Force close or Force open Quickshell
-hl.bind(mainMod .. " + ESCAPE", hl.dsp.exec_cmd("praxis-restart-shell"), { description = "System: Restart the desktop" })
+hl.bind(mainMod .. " + ESCAPE", hl.dsp.exec_cmd("mkos-restart-shell"), { description = "System: Restart the desktop" })
 -- Ctrl+Shift+Escape → task manager (what's using CPU/GPU, stop it)
 hl.bind("CTRL + SHIFT + ESCAPE", hl.dsp.exec_cmd("quickshell ipc call tasks open cpu"), { description = "System: Task manager" })
 -- Super+A  → AI Spotlight (search/command bar)
-hl.bind(mainMod .. " + A", hl.dsp.exec_cmd("quickshell ipc call shell toggle launcher"), { description = "Praxis: Search and launch" })
+hl.bind(mainMod .. " + A", hl.dsp.exec_cmd("quickshell ipc call shell toggle launcher"), { description = "MKOS: Search and launch" })
 -- Super+I  → AI Chat panel
-hl.bind(mainMod .. " + I", hl.dsp.exec_cmd("quickshell ipc call shell toggle ai"), { description = "Praxis: AI assistant" })
+hl.bind(mainMod .. " + I", hl.dsp.exec_cmd("quickshell ipc call shell toggle ai"), { description = "MKOS: AI assistant" })
 -- Super+O  → Control Center (Overview)
-hl.bind(mainMod .. " + O", hl.dsp.exec_cmd("quickshell ipc call shell toggle cc"), { description = "Praxis: Control Center" })
+hl.bind(mainMod .. " + O", hl.dsp.exec_cmd("quickshell ipc call shell toggle cc"), { description = "MKOS: Control Center" })
 -- Super+W  → Launchpad (Windows/Apps)
-hl.bind(mainMod .. " + W", hl.dsp.exec_cmd("quickshell ipc call shell toggle launcher"), { description = "Praxis: Search and launch" })
+hl.bind(mainMod .. " + W", hl.dsp.exec_cmd("quickshell ipc call shell toggle launcher"), { description = "MKOS: Search and launch" })
 -- Tap Super (Windows key) to open search apps
 -- Tap Super on its own to search. Two bindings, not four: "SUPER_L" with no
 -- modifier still registers with modmask 64, identical to "SUPER + SUPER_L",
 -- so the pair below used to be registered twice. One tap then fired the
 -- toggle twice and the launcher opened and shut in the same frame, which
 -- looks exactly like the key doing nothing.
-hl.bind("SUPER + SUPER_L", hl.dsp.exec_cmd("quickshell ipc call shell toggle launcher"), { release = true, description = "Praxis: Search and launch (tap Super)" })
-hl.bind("SUPER + SUPER_R", hl.dsp.exec_cmd("quickshell ipc call shell toggle launcher"), { release = true, description = "Praxis: Search and launch (tap Super)" })
+hl.bind("SUPER + SUPER_L", hl.dsp.exec_cmd("quickshell ipc call shell toggle launcher"), { release = true, description = "MKOS: Search and launch (tap Super)" })
+hl.bind("SUPER + SUPER_R", hl.dsp.exec_cmd("quickshell ipc call shell toggle launcher"), { release = true, description = "MKOS: Search and launch (tap Super)" })
 -- Super+P  → Display / Projection settings
-hl.bind(mainMod .. " + P", hl.dsp.exec_cmd("quickshell ipc call shell settings Display"), { description = "Praxis: Display settings" })
+hl.bind(mainMod .. " + P", hl.dsp.exec_cmd("quickshell ipc call shell settings Display"), { description = "MKOS: Display settings" })
 -- Super+Space → App Search & Omnibox
-hl.bind(mainMod .. " + SPACE", hl.dsp.exec_cmd("quickshell ipc call shell toggle launcher"), { description = "Praxis: Search and launch" })
+hl.bind(mainMod .. " + SPACE", hl.dsp.exec_cmd("quickshell ipc call shell toggle launcher"), { description = "MKOS: Search and launch" })
 -- Super+B → widget board (StandBy-style tiles: clock, calendar, battery, sys, media, weather)
-hl.bind(mainMod .. " + B", hl.dsp.exec_cmd("quickshell ipc call shell toggle widgets"), { description = "Praxis: Widgets" })
--- Super+Shift+D: share this screen with another Praxis machine.
+hl.bind(mainMod .. " + B", hl.dsp.exec_cmd("quickshell ipc call shell toggle widgets"), { description = "MKOS: Widgets" })
+-- Super+Shift+D: share this screen with another MKOS machine.
 -- Not Shift+S — that is already the area screenshot, and binding it twice
 -- meant every attempt to share the screen fired slurp instead.
-hl.bind(mainMod .. " + SHIFT + D", hl.dsp.exec_cmd("quickshell ipc call shell toggle share"), { description = "Praxis: Share screen" })
+hl.bind(mainMod .. " + SHIFT + D", hl.dsp.exec_cmd("quickshell ipc call shell toggle share"), { description = "MKOS: Share screen" })
 -- Super+Alt+D: leave a shared screen you are watching. The viewer is a
 -- fullscreen window with no buttons of its own, so it needs a way out.
-hl.bind(mainMod .. " + ALT + D", hl.dsp.exec_cmd("praxis-share disconnect"), { description = "Praxis: Stop watching a shared screen" })
+hl.bind(mainMod .. " + ALT + D", hl.dsp.exec_cmd("mkos-share disconnect"), { description = "MKOS: Stop watching a shared screen" })
 -- Super+Shift+Q → power menu (lock/suspend/logout/reboot/off)
-hl.bind(mainMod .. " + SHIFT + Q", hl.dsp.exec_cmd("praxis-power"), { description = "System: Power menu" })
+hl.bind(mainMod .. " + SHIFT + Q", hl.dsp.exec_cmd("mkos-power"), { description = "System: Power menu" })
 -- Super+N → quicknote (rofi prompt → today's ~/aios/notes/YYYY-MM-DD.md)
-hl.bind(mainMod .. " + N", hl.dsp.exec_cmd("praxis-quicknote"), { description = "Tools: Quick note" })
+hl.bind(mainMod .. " + N", hl.dsp.exec_cmd("mkos-quicknote"), { description = "Tools: Quick note" })
 -- Super+Shift+O → OCR a screen region into the clipboard
-hl.bind(mainMod .. " + SHIFT + O", hl.dsp.exec_cmd("praxis-ocr"), { description = "Tools: Copy text from the screen" })
+hl.bind(mainMod .. " + SHIFT + O", hl.dsp.exec_cmd("mkos-ocr"), { description = "Tools: Copy text from the screen" })
 -- Super+H → voice typing: talk, press Super+H again and it is typed where the cursor is
 --           (terminal, browser, chat — anywhere). Say "new line", end with "press enter".
-hl.bind(mainMod .. " + H", hl.dsp.exec_cmd("praxis-dictate"), { description = "Tools: Voice typing" })
+hl.bind(mainMod .. " + H", hl.dsp.exec_cmd("mkos-dictate"), { description = "Tools: Voice typing" })
 -- Super+Shift+H → say what you want done; the matching shell command is typed (never run)
-hl.bind(mainMod .. " + SHIFT + H", hl.dsp.exec_cmd("praxis-dictate --command"), { description = "Tools: Voice to terminal command" })
+hl.bind(mainMod .. " + SHIFT + H", hl.dsp.exec_cmd("mkos-dictate --command"), { description = "Tools: Voice to terminal command" })
 -- Super+G → Game mode (AI off so the GPU is yours, performance, no notifications/blur)
-hl.bind(mainMod .. " + G", hl.dsp.exec_cmd("praxis-mode game toggle"), { description = "Praxis: Game mode" })
+hl.bind(mainMod .. " + G", hl.dsp.exec_cmd("mkos-mode game toggle"), { description = "MKOS: Game mode" })
 -- Small tools, as on Windows / macOS
-hl.bind(mainMod .. " + SHIFT + V", hl.dsp.exec_cmd("praxis-clipboard"), { description = "Tools: Clipboard history" })    -- clipboard history (pick → pasted)
-hl.bind(mainMod .. " + period",    hl.dsp.exec_cmd("praxis-emoji"), { description = "Tools: Emoji picker" })        -- emoji picker
-hl.bind(mainMod .. " + SHIFT + C", hl.dsp.exec_cmd("praxis-colorpick"), { description = "Tools: Colour picker" })    -- colour picker → hex on the clipboard
-hl.bind(mainMod .. " + SHIFT + R", hl.dsp.exec_cmd("praxis-record"), { description = "Tools: Record the screen" })       -- record the screen (again: stop)
+hl.bind(mainMod .. " + SHIFT + V", hl.dsp.exec_cmd("mkos-clipboard"), { description = "Tools: Clipboard history" })    -- clipboard history (pick → pasted)
+hl.bind(mainMod .. " + period",    hl.dsp.exec_cmd("mkos-emoji"), { description = "Tools: Emoji picker" })        -- emoji picker
+hl.bind(mainMod .. " + SHIFT + C", hl.dsp.exec_cmd("mkos-colorpick"), { description = "Tools: Colour picker" })    -- colour picker → hex on the clipboard
+hl.bind(mainMod .. " + SHIFT + R", hl.dsp.exec_cmd("mkos-record"), { description = "Tools: Record the screen" })       -- record the screen (again: stop)
 
 
 -- Snap with mainMod + arrow keys: left / right half, maximise, back into the tiles
-hl.bind(mainMod .. " + left",  hl.dsp.exec_cmd("praxis-win snap left"), { description = "Windows: Snap to the left half" })
-hl.bind(mainMod .. " + right", hl.dsp.exec_cmd("praxis-win snap right"), { description = "Windows: Snap to the right half" })
-hl.bind(mainMod .. " + up",    hl.dsp.exec_cmd("praxis-win snap max"), { description = "Windows: Maximise" })
-hl.bind(mainMod .. " + down",  hl.dsp.exec_cmd("praxis-win snap restore"), { description = "Windows: Back into the tiles" })
+hl.bind(mainMod .. " + left",  hl.dsp.exec_cmd("mkos-win snap left"), { description = "Windows: Snap to the left half" })
+hl.bind(mainMod .. " + right", hl.dsp.exec_cmd("mkos-win snap right"), { description = "Windows: Snap to the right half" })
+hl.bind(mainMod .. " + up",    hl.dsp.exec_cmd("mkos-win snap max"), { description = "Windows: Maximise" })
+hl.bind(mainMod .. " + down",  hl.dsp.exec_cmd("mkos-win snap restore"), { description = "Windows: Back into the tiles" })
 -- Thirds: mainMod + ALT + 1 / 2 / 3 → left / centre / right column
-hl.bind(mainMod .. " + ALT + 1", hl.dsp.exec_cmd("praxis-win snap left3"), { description = "Windows: Snap to the left third" })
-hl.bind(mainMod .. " + ALT + 2", hl.dsp.exec_cmd("praxis-win snap mid3"), { description = "Windows: Snap to the middle third" })
-hl.bind(mainMod .. " + ALT + 3", hl.dsp.exec_cmd("praxis-win snap right3"), { description = "Windows: Snap to the right third" })
+hl.bind(mainMod .. " + ALT + 1", hl.dsp.exec_cmd("mkos-win snap left3"), { description = "Windows: Snap to the left third" })
+hl.bind(mainMod .. " + ALT + 2", hl.dsp.exec_cmd("mkos-win snap mid3"), { description = "Windows: Snap to the middle third" })
+hl.bind(mainMod .. " + ALT + 3", hl.dsp.exec_cmd("mkos-win snap right3"), { description = "Windows: Snap to the right third" })
 -- Layout: tiles → master + stack → 3 columns (master in the middle)
-hl.bind(mainMod .. " + ALT + M", hl.dsp.exec_cmd("praxis-win layout"), { description = "Windows: Next layout (tiles, master, 3 columns)" })
+hl.bind(mainMod .. " + ALT + M", hl.dsp.exec_cmd("mkos-win layout"), { description = "Windows: Next layout (tiles, master, 3 columns)" })
 
 -- Move focus with mainMod + ALT + arrow keys
 hl.bind(mainMod .. " + ALT + left",  hl.dsp.focus({ direction = "left" }), { description = "Windows: Focus the window on the left" })
@@ -557,8 +557,8 @@ hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd("wpctl set-volume -l 1 @DEFAULT_
 hl.bind("XF86AudioLowerVolume", hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),      { locked = true, repeating = true, description = "Media: Volume down" })
 hl.bind("XF86AudioMute",        hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),     { locked = true, repeating = true, description = "Media: Mute" })
 hl.bind("XF86AudioMicMute",     hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"),   { locked = true, repeating = true, description = "Media: Mute microphone" })
-hl.bind("XF86MonBrightnessUp",  hl.dsp.exec_cmd("praxis-brightness up"),                            { locked = true, repeating = true, description = "Media: Brightness up" })
-hl.bind("XF86MonBrightnessDown",hl.dsp.exec_cmd("praxis-brightness down"),                          { locked = true, repeating = true, description = "Media: Brightness down" })
+hl.bind("XF86MonBrightnessUp",  hl.dsp.exec_cmd("mkos-brightness up"),                            { locked = true, repeating = true, description = "Media: Brightness up" })
+hl.bind("XF86MonBrightnessDown",hl.dsp.exec_cmd("mkos-brightness down"),                          { locked = true, repeating = true, description = "Media: Brightness down" })
 
 -- Requires playerctl
 hl.bind("XF86AudioNext",  hl.dsp.exec_cmd("playerctl next"),       { locked = true, description = "Media: Next track" })
@@ -608,17 +608,17 @@ hl.window_rule({
 -- })
 -- overlayLayerRule:set_enabled(false)
 
--- The Praxis installer (live USB) opens as a centred window, not a tile
+-- The MKOS installer (live USB) opens as a centred window, not a tile
 hl.window_rule({
-    name   = "praxis-installer",
-    match  = { title = "^Install Praxis Linux" },
+    name   = "mkos-installer",
+    match  = { title = "^Install MKOS Linux" },
     float  = true,
     center = true,
 })
 
--- Praxis Screen Share viewer opens fullscreen
+-- MKOS Screen Share viewer opens fullscreen
 hl.window_rule({
-    name       = "praxis-share-viewer-fullscreen",
+    name       = "mkos-share-viewer-fullscreen",
     match      = { class = "^(gst-launch-1.0)$" },
     fullscreen = true,
 })
@@ -646,6 +646,6 @@ hl.layer_rule({
 -------------------------------
 
 -- Keyboard layout, monitors and anything else specific to one machine live in
--- ~/.config/hypr/praxis-local.lua (written by the installer and by Settings),
--- so replacing this file with a newer Praxis version never loses them.
-pcall(require, "praxis-local")
+-- ~/.config/hypr/mkos-local.lua (written by the installer and by Settings),
+-- so replacing this file with a newer MKOS version never loses them.
+pcall(require, "mkos-local")

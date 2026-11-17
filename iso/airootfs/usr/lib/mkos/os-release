@@ -1,0 +1,12 @@
+NAME="MKOS"
+PRETTY_NAME="MKOS Linux (unofficial, based on Arch)"
+ID=mkos
+ID_LIKE=arch
+BUILD_ID=rolling
+VERSION_ID="2026.09"
+ANSI_COLOR="38;2;51;204;255"
+HOME_URL="https://github.com/MrMehulkhanna/mkos"
+DOCUMENTATION_URL="https://github.com/MrMehulkhanna/mkos"
+SUPPORT_URL="https://github.com/MrMehulkhanna/mkos/issues"
+BUG_REPORT_URL="https://github.com/MrMehulkhanna/mkos/issues"
+LOGO=mkos

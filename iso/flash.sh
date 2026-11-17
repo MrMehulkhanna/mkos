@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  Write a Praxis ISO to a USB drive and verify the write.
+#  Write a MKOS ISO to a USB drive and verify the write.
 #
 #    iso/flash.sh                         newest ISO in the build dir, auto-detect USB
-#    iso/flash.sh path/to/praxis.iso      a specific ISO
-#    iso/flash.sh path/to/praxis.iso /dev/sdX
+#    iso/flash.sh path/to/mkos.iso      a specific ISO
+#    iso/flash.sh path/to/mkos.iso /dev/sdX
 #
 #  Safety: refuses anything that is not a USB disk, refuses the disk the
 #  running system lives on, and asks you to type ERASE before writing.
@@ -12,13 +12,13 @@
 set -euo pipefail
 die() { printf '\n\033[1;31m!! %s\033[0m\n' "$*" >&2; exit 1; }
 
-BUILD=${PRAXIS_BUILD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/praxis-iso}
+BUILD=${MKOS_BUILD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/mkos-iso}
 TARGET=""
 if [ -n "${1:-}" ] && [ -b "$1" ]; then
     TARGET=$1
-    ISO=$(ls -t "$BUILD"/out/praxis-*.iso 2>/dev/null | head -1 || true)
+    ISO=$(ls -t "$BUILD"/out/mkos-*.iso 2>/dev/null | head -1 || true)
 else
-    ISO=${1:-$(ls -t "$BUILD"/out/praxis-*.iso 2>/dev/null | head -1 || true)}
+    ISO=${1:-$(ls -t "$BUILD"/out/mkos-*.iso 2>/dev/null | head -1 || true)}
     [ -n "${2:-}" ] && TARGET=$2
 fi
 [ -n "$ISO" ] && [ -f "$ISO" ] || die "no ISO found — build one with iso/build.sh or pass its path"
@@ -62,5 +62,5 @@ have=$(sudo head -c "$SIZE" "$TARGET" | sha256sum | cut -d' ' -f1)
 
 printf '\033[1;32mDone — written and verified.\033[0m\n'
 printf 'Boot it: plug into the target PC, open its boot menu (F12 / F9 / Esc / F8),\n'
-printf 'choose the USB drive in UEFI mode, and click "Install Praxis Linux" in the dock.\n'
+printf 'choose the USB drive in UEFI mode, and click "Install MKOS Linux" in the dock.\n'
 printf 'Secure Boot must be disabled in the firmware settings.\n'

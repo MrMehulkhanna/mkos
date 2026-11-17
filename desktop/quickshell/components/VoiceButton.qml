@@ -4,7 +4,7 @@ import Quickshell.Io
 import "root:/Config"
 import "root:/Services"
 
-// Voice typing button in the bar (praxis-dictate / Super+H).
+// Voice typing button in the bar (mkos-dictate / Super+H).
 // Click = start listening; click again = stop and type into focused window.
 Item {
     id: root
@@ -13,7 +13,7 @@ Item {
     property string state: "idle"       // idle | listening | working
     property string mode: "text"        // text | command
 
-    readonly property string dir: Quickshell.env("XDG_RUNTIME_DIR") + "/praxis"
+    readonly property string dir: Quickshell.env("XDG_RUNTIME_DIR") + "/mkos"
 
     // Ensure state file exists before FileView tries to watch it.
     // Without this init, watchChanges silently fails on a missing file.
@@ -70,7 +70,7 @@ Item {
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             onClicked: mouse => {
                 if (mouse.button === Qt.LeftButton) {
-                    Quickshell.execDetached(["bash", "-lc", "command -v praxis-dictate >/dev/null && praxis-dictate || /usr/local/bin/praxis-dictate || ~/.local/bin/praxis-dictate || ~/aios/iso/airootfs/usr/local/bin/praxis-dictate"])
+                    Quickshell.execDetached(["bash", "-lc", "command -v mkos-dictate >/dev/null && mkos-dictate || /usr/local/bin/mkos-dictate || ~/.local/bin/mkos-dictate || ~/aios/iso/airootfs/usr/local/bin/mkos-dictate"])
                 } else if (mouse.button === Qt.RightButton) {
                     help.shown = !help.shown
                 }

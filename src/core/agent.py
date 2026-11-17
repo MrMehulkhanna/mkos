@@ -53,7 +53,7 @@ def _machine() -> tuple[str, str]:
 
 _KIND, _GPUS = _machine()
 SYSTEM = (
-    f"You are the AI assistant built into Praxis Linux, running on the user's own Arch-based {_KIND} "
+    f"You are the AI assistant built into MKOS Linux, running on the user's own Arch-based {_KIND} "
     "(Hyprland with a Lua config — options via hyprctl eval 'hl.config{…}', dispatch via hyprctl dispatch 'hl.dsp.…' — "
     f"PipeWire, NetworkManager, {_GPUS}, systemd). "
     "Diagnostic command outputs are provided as evidence — base your answer on them, quote the "

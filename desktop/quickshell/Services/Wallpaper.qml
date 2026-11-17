@@ -7,8 +7,8 @@ import Quickshell.Services.UPower
 import "root:/Config"
 
 // Wallpapers: stills (hyprpaper) and live videos (mpvpaper), both driven
-// through `praxis-wallpaper`, which keeps the choice in
-// ~/.config/praxis/wallpaper.state. This service lists what's available,
+// through `mkos-wallpaper`, which keeps the choice in
+// ~/.config/mkos/wallpaper.state. This service lists what's available,
 // mirrors that state for the Settings window, restores it at login, repairs
 // the live wallpaper when a monitor is plugged in, and — unless the user opts
 // out — shows the still image instead of the video while on battery.
@@ -16,8 +16,8 @@ Singleton {
     id: root
 
     readonly property string dir: Quickshell.env("HOME") + "/.local/share/wallpapers"
-    readonly property string thumbDir: Quickshell.env("HOME") + "/.cache/praxis/wallpaper-thumbs"
-    readonly property string stateFile: Quickshell.env("HOME") + "/.config/praxis/wallpaper.state"
+    readonly property string thumbDir: Quickshell.env("HOME") + "/.cache/mkos/wallpaper-thumbs"
+    readonly property string stateFile: Quickshell.env("HOME") + "/.config/mkos/wallpaper.state"
 
     property var files: []            // still images
     property var videos: []           // [{ path, thumb }] — only ones ffmpeg could read
@@ -97,7 +97,7 @@ Singleton {
     property var queued: null
     function run(args) {
         if (cmd.running) { queued = args; return }
-        cmd.command = ["praxis-wallpaper"].concat(args)
+        cmd.command = ["mkos-wallpaper"].concat(args)
         cmd.running = true
     }
     Process {
@@ -119,7 +119,7 @@ Singleton {
         startProc.command = ["bash", "-c",
             `s=$1 f=$2
              if [ -n "$s" ] && ! grep -qs '^still=' "$f"; then mkdir -p "$(dirname "$f")"; echo "still=$s" >> "$f"; fi
-             exec praxis-wallpaper "$3"`, "wallpaper-start", Settings.wallpaper, root.stateFile, root.liveAllowed ? "restore" : "suspend"]
+             exec mkos-wallpaper "$3"`, "wallpaper-start", Settings.wallpaper, root.stateFile, root.liveAllowed ? "restore" : "suspend"]
         startProc.running = true
     }
     Process { id: startProc; onExited: stateView.reload() }

@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# mkos-mouse — use one mouse, keyboard and clipboard across two MKOS PCs.
+#
+#   mkos-mouse on                 start sharing now and at every login
+#   mkos-mouse off                stop, and stay off
+#   mkos-mouse pair HOST left|right
+#                                   the other PC sits on that side of this one
+#   mkos-mouse forget left|right  drop the PC on that side
+#   mkos-mouse status
+#
+# Move the pointer off that edge of the screen and it carries on on the other
+# PC, keyboard included; come back the same way. A+S+D+F together releases it.
+#
+# Only input crosses the network — a few bytes per movement — and the other
+# PC draws its own pointer at its own refresh rate, so it feels like a mouse
+# plugged into that PC: no video, no delay to see. Built on lan-mouse
+# (github.com/feschber/lan-mouse), which captures at the screen edge through
+# the layer-shell protocol and types through wlroots virtual input, both of
+# which Hyprland supports. The pairing swap of certificate fingerprints runs
+# over the screen share's TLS-PSK link, so the same code protects both.
+set -euo pipefail
+
+STATE="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/mkos-mouse"
+FLAG="$HOME/.config/mkos/mouse-on"
+LM_DIR="$HOME/.config/lan-mouse"
+# the same fixed code the screen share uses while pairing codes are off
+CODE="${MKOS_SHARE_CODE:-0000}"
+mkdir -p "$STATE"
+
+info() { printf '\033[36m•\033[0m %s\n' "$*"; }
+ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
+die()  { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+
+lm() { command -v lan-mouse || { [ -x "$HOME/.local/bin/lan-mouse" ] && echo "$HOME/.local/bin/lan-mouse"; } || true; }
+
+ensure_cert() {
+    [ -s "$LM_DIR/lan-mouse.pem" ] && return 0
+    mkdir -p "$LM_DIR"
+    [ -f "$LM_DIR/config.toml" ] || printf 'port = 4242\n' > "$LM_DIR/config.toml"
+    # lan-mouse writes its certificate the first time it starts
+    timeout 4 "$(lm)" --capture-backend layer-shell daemon >/dev/null 2>&1 || true
+    [ -s "$LM_DIR/lan-mouse.pem" ] || die "lan-mouse did not create its certificate"
+}
+
+running() { [ -f "$STATE/$1.pid" ] && kill -0 "$(cat "$STATE/$1.pid")" 2>/dev/null; }
+
+# lan-mouse rewrites its config file itself (on activate/deactivate) and
+# has been seen to drop the paired PCs from it. MKOS keeps its own copy,
+# saved after every pairing, and puts it back before lan-mouse starts.
+KEEP="$LM_DIR/config.mkos.toml"
+save_pairing() { cp "$LM_DIR/config.toml" "$KEEP" 2>/dev/null || true; }
+restore_pairing() {
+    [ -s "$KEEP" ] || return 0
+    grep -q '^\[\[clients\]\]' "$LM_DIR/config.toml" 2>/dev/null || cp "$KEEP" "$LM_DIR/config.toml"
+}
+
+start() {
+    [ -n "$(lm)" ] || die "lan-mouse is not installed — run the MKOS update"
+    ensure_cert
+    running daemon || restore_pairing
+    if ! running daemon; then
+        # layer-shell capture: Hyprland's portal has no InputCapture, which
+        # lan-mouse would otherwise try first and get nothing from
+        setsid "$(lm)" --capture-backend layer-shell --emulation-backend wlroots daemon \
+            >"$STATE/daemon.log" 2>&1 &
+        echo $! > "$STATE/daemon.pid"
+    fi
+    if ! running listen; then
+        setsid mkos-share-gate mouse-listen --code "$CODE" >"$STATE/listen.log" 2>&1 &
+        echo $! > "$STATE/listen.pid"
+    fi
+    # shared clipboard with the same PCs: copy here, paste there (text,
+    # images, files); see clip_listen in mkos-share-gate
+    if ! running clip; then
+        setsid mkos-share-gate clip-listen --code "$CODE" >"$STATE/clip.log" 2>&1 &
+        echo $! > "$STATE/clip.pid"
+    fi
+    local peers; peers=$(grep -oE '^ips = \["[^"]+"' "$LM_DIR/config.toml" 2>/dev/null | cut -d'"' -f2 | tr '\n' ' ' || true)
+    if [ -n "$peers" ] && ! running clipwatch && command -v wl-paste >/dev/null; then
+        # shellcheck disable=SC2086
+        setsid wl-paste --watch mkos-share-gate clip-send --code "$CODE" $peers \
+            >"$STATE/clipwatch.log" 2>&1 &
+        echo $! > "$STATE/clipwatch.pid"
+    fi
+}
+
+stop() {
+    local p
+    for p in daemon listen clip clipwatch; do
+        running "$p" && kill "$(cat "$STATE/$p.pid")" 2>/dev/null || true
+        rm -f "$STATE/$p.pid"
+    done
+}
+
+case "${1:-status}" in
+    on)      mkdir -p "${FLAG%/*}"; touch "$FLAG"; start; ok "mouse & keyboard sharing on" ;;
+    off)     rm -f "$FLAG"; stop; ok "mouse & keyboard sharing off" ;;
+    start)   [ -f "$FLAG" ] && start || true ;;          # at login: only if switched on
+    pause)
+        # While this PC's screen is shown on the other PC, stop grabbing the
+        # screen edge (the extra display sits there) but keep the daemon
+        # running, so the other PC's own mouse and keyboard can still come
+        # across and work on the shared screen it is showing.
+        running daemon || exit 0
+        for id in $("$(lm)" cli list 2>/dev/null | grep -oE '^id [0-9]+' | awk '{print $2}'); do
+            "$(lm)" cli deactivate "$id" >/dev/null 2>&1 || true
+        done ;;
+    resume)
+        [ -f "$FLAG" ] || exit 0
+        if running daemon; then
+            for id in $("$(lm)" cli list 2>/dev/null | grep -oE '^id [0-9]+' | awk '{print $2}'); do
+                "$(lm)" cli activate "$id" >/dev/null 2>&1 || true
+            done
+        else start; fi ;;
+
+    restart)
+        running daemon && { kill "$(cat "$STATE/daemon.pid")" 2>/dev/null || true; rm -f "$STATE/daemon.pid"; sleep 0.5; }
+        running clipwatch && { kill "$(cat "$STATE/clipwatch.pid")" 2>/dev/null || true; rm -f "$STATE/clipwatch.pid"; }
+        [ -f "$FLAG" ] && start || true ;;
+    pair)
+        host="${2:-}"; pos="${3:-}"
+        [ -n "$host" ] && [[ "$pos" =~ ^(left|right|top|bottom)$ ]] || die "usage: mkos-mouse pair HOST left|right"
+        mkdir -p "${FLAG%/*}"; touch "$FLAG"
+        ensure_cert; start
+        mkos-share-gate mouse-pair --host "${host%%:*}" --pos "$pos" --code "$CODE"
+        save_pairing
+        "$0" restart; ok "move the pointer off the $pos edge to reach it" ;;
+    forget)
+        [[ "${2:-}" =~ ^(left|right|top|bottom)$ ]] || die "usage: mkos-mouse forget left|right"
+        mkos-share-gate mouse-forget --pos "$2"; save_pairing; "$0" restart; ok "forgot the PC on the $2" ;;
+    status)
+        if running daemon; then ok "on"; else info "off"; fi
+        grep -A3 '^\[\[clients\]\]' "$LM_DIR/config.toml" 2>/dev/null \
+            | grep -E 'position|hostname|ips' | paste - - - | sed 's/^/  /' || true ;;
+    *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

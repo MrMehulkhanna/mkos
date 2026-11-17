@@ -66,7 +66,7 @@ OverlayWindow {
     // ── shortcuts: every key binding with its plain-English description ──
     // descriptions read "Group: What it does"; same action on several keys → one row
     property var bindList: []
-    readonly property var bindGroups: ["Praxis", "Apps", "Windows", "Workspaces", "Monitors", "Tools", "Screenshots", "Media", "System"]
+    readonly property var bindGroups: ["MKOS", "Apps", "Windows", "Workspaces", "Monitors", "Tools", "Screenshots", "Media", "System"]
     readonly property var gestureList: [
         { group: "Gestures", action: "Switch workspace", keys: "3 fingers left / right" },
         { group: "Gestures", action: "Overview of all workspaces", keys: "3 fingers up" },
@@ -220,7 +220,7 @@ OverlayWindow {
             }
             H { text: "SYSTEM UPDATES" }
             SettingRow {
-                label: "Update Praxis OS"
+                label: "Update MKOS"
                 description: "Pull the latest desktop, tools and system packages. Progress and any restart requirement are shown in the window."
                 Btn {
                     icon: "refresh"; label: "Update System"
@@ -231,9 +231,9 @@ OverlayWindow {
             SettingRow {
                 id: lockRow
                 property bool on: false
-                readonly property string flag: Quickshell.env("HOME") + "/.config/praxis/lock-at-login"
+                readonly property string flag: Quickshell.env("HOME") + "/.config/mkos/lock-at-login"
                 label: "Ask for my password when the computer starts"
-                description: "On a Praxis install that logs in automatically, the desktop starts behind the lock screen. (Systems with a login screen already ask.)"
+                description: "On a MKOS install that logs in automatically, the desktop starts behind the lock screen. (Systems with a login screen already ask.)"
                 Toggle { checked: lockRow.on; onToggled: v => { lockRow.on = v; Quickshell.execDetached(["bash", "-c", v ? 'mkdir -p "${1%/*}" && touch "$1"' : 'rm -f "$1"', "lock", lockRow.flag]) } }
                 Process { running: true; command: ["test", "-e", lockRow.flag]; onExited: code => lockRow.on = code === 0 }
             }
@@ -278,11 +278,11 @@ OverlayWindow {
                     spacing: 6
                     Btn {
                         icon: "refresh"; label: "Auto-sync Time"
-                        onClicked: Quickshell.execDetached(["praxis-time", "auto"])
+                        onClicked: Quickshell.execDetached(["mkos-time", "auto"])
                     }
                     Btn {
                         icon: "edit"; label: "Change Timezone"
-                        onClicked: Quickshell.execDetached(["kitty", "--title", "Select Timezone", "-e", "praxis-time", "pick"])
+                        onClicked: Quickshell.execDetached(["kitty", "--title", "Select Timezone", "-e", "mkos-time", "pick"])
                     }
                 }
             }
@@ -291,7 +291,7 @@ OverlayWindow {
                 description: "Sets motherboard RTC to local time so Windows and Linux clocks match exactly"
                 Btn {
                     icon: "wrench"; label: "Fix Dual-Boot Time"
-                    onClicked: Quickshell.execDetached(["praxis-time", "dualboot"])
+                    onClicked: Quickshell.execDetached(["mkos-time", "dualboot"])
                 }
             }
             H { text: "DISPLAY FORMAT" }
@@ -519,7 +519,7 @@ OverlayWindow {
                         }
                     }
                     // ── scale: text, icons and windows bigger or smaller, all at
-                    // once, per screen. Goes through praxis-display, which
+                    // once, per screen. Goes through mkos-display, which
                     // asks to keep or goes back by itself after 15 s.
                     Repeater {
                         model: Display.panels.filter(p => !String(p.name).startsWith("HEADLESS"))
@@ -546,7 +546,7 @@ OverlayWindow {
                             Segmented {
                                 options: [1, 1.25, 1.5, 1.75, 2].map(s => ({ value: s, label: Math.round(s * 100) + " %" }))
                                 value: Math.round(modelData.scale * 4) / 4
-                                onSelected: v => { Quickshell.execDetached(["praxis-share", "scale", String(v)]); Display.refresh() }
+                                onSelected: v => { Quickshell.execDetached(["mkos-share", "scale", String(v)]); Display.refresh() }
                             }
                         }
                     }
@@ -561,7 +561,7 @@ OverlayWindow {
                         label: "Share this screen with another PC"
                         description: Share.serving
                             ? "Sharing now on port " + Share.port + ". " + Share.clients + (Share.clients === 1 ? " viewer" : " viewers") + "."
-                            : "Use another Praxis machine as a second display, or show its screen here.  Super+Shift+D"
+                            : "Use another MKOS machine as a second display, or show its screen here.  Super+Shift+D"
                         Btn {
                             icon: "monitor"
                             label: Share.serving ? "Sharing — open" : "Open"
@@ -714,7 +714,7 @@ OverlayWindow {
                     }
                     Text {
                         width: parent.width; wrapMode: Text.WordWrap
-                        text: "Praxis Screen Share connects two computers directly over local Wi-Fi with zero cloud transmission. Add an extra virtual monitor to the right of your screen or mirror an existing display with full audio. Secured by automated device discovery and a 4-digit pairing PIN."
+                        text: "MKOS Screen Share connects two computers directly over local Wi-Fi with zero cloud transmission. Add an extra virtual monitor to the right of your screen or mirror an existing display with full audio. Secured by automated device discovery and a 4-digit pairing PIN."
                         color: Theme.text2; font.family: Theme.font; font.pixelSize: Theme.fontSm
                     }
                 }
@@ -885,7 +885,7 @@ OverlayWindow {
                 color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.fontSm; topPadding: 8
             }
             Text {
-                text: "Touchpad sensitivity changes take effect immediately in Hyprland and persist in ~/.config/hypr/praxis-local.lua across reboots."
+                text: "Touchpad sensitivity changes take effect immediately in Hyprland and persist in ~/.config/hypr/mkos-local.lua across reboots."
                 color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.fontXs; width: parent.width; wrapMode: Text.WordWrap; topPadding: 12
             }
         }
@@ -1102,7 +1102,7 @@ OverlayWindow {
                             icon: "key"
                             label: "Pair with PIN"
                             onClicked: {
-                                Shell.run(["praxis-bluetooth", "pair", modelData.address, modelData.name || modelData.deviceName || modelData.address])
+                                Shell.run(["mkos-bluetooth", "pair", modelData.address, modelData.name || modelData.deviceName || modelData.address])
                             }
                         }
                         Btn { visible: modelData.paired; icon: "trash"; onClicked: modelData.forget() }
@@ -1128,7 +1128,7 @@ OverlayWindow {
                 SettingRow { required property var modelData; label: modelData.description || modelData.nickname || modelData.name
                     Btn { icon: Audio.sink === modelData ? "check" : "volume-high"; label: Audio.sink === modelData ? "Default" : "Use"; active: Audio.sink === modelData; iconColor: active ? Theme.onAccent : Theme.text2; onClicked: Audio.setDefaultSink(modelData) } }
             }
-            // ── several speakers at once, in sync (praxis-audio together) ──
+            // ── several speakers at once, in sync (mkos-audio together) ──
             H { text: "PLAY ON SEVERAL SPEAKERS, IN SYNC" }
             Text {
                 width: parent.width; wrapMode: Text.WordWrap; bottomPadding: 6
@@ -1139,11 +1139,11 @@ OverlayWindow {
                 id: together
                 width: parent.width; height: togetherCol.implicitHeight
                 property var picked: []
-                property bool on: Audio.sink && Audio.sink.name === "praxis-together"
+                property bool on: Audio.sink && Audio.sink.name === "mkos-together"
                 Column {
                     id: togetherCol; width: parent.width; spacing: 0
                     Repeater {
-                        model: Audio.sinks.filter(n => n.name !== "praxis-together")
+                        model: Audio.sinks.filter(n => n.name !== "mkos-together")
                         SettingRow {
                             required property var modelData
                             label: modelData.description || modelData.nickname || modelData.name
@@ -1162,11 +1162,11 @@ OverlayWindow {
                         // one press: every connected speaker, in sync (the PC
                         // viewing a shared screen joins in when sound is shared)
                         Btn { icon: "volume-high"; label: "Use all speakers"; active: true; iconColor: Theme.onAccent
-                              onClicked: Quickshell.execDetached(["praxis-audio", "all"]) }
+                              onClicked: Quickshell.execDetached(["mkos-audio", "all"]) }
                         Btn { icon: "volume-high"; label: "Play together (" + together.picked.length + ")"
                               active: together.picked.length >= 2; iconColor: active ? Theme.onAccent : Theme.text2
-                              onClicked: if (together.picked.length >= 2) Quickshell.execDetached(["praxis-audio", "together"].concat(together.picked)) }
-                        Btn { visible: together.on; icon: "x"; label: "Back to one speaker"; onClicked: Quickshell.execDetached(["praxis-audio", "single"]) }
+                              onClicked: if (together.picked.length >= 2) Quickshell.execDetached(["mkos-audio", "together"].concat(together.picked)) }
+                        Btn { visible: together.on; icon: "x"; label: "Back to one speaker"; onClicked: Quickshell.execDetached(["mkos-audio", "single"]) }
                     }
                 }
             }
@@ -1370,7 +1370,7 @@ OverlayWindow {
     }
 
     // ═══════════════ HEALTH ═══════════════
-    // praxis-doctor's findings, problems first, each with its fix
+    // mkos-doctor's findings, problems first, each with its fix
     Component {
         id: health
         Column {
@@ -1383,7 +1383,7 @@ OverlayWindow {
             Component.onCompleted: run()
             Process {
                 id: probe
-                command: ["praxis-doctor", "--json"]
+                command: ["mkos-doctor", "--json"]
                 stdout: StdioCollector { onStreamFinished: { try { hc.items = JSON.parse(this.text) } catch (e) {} hc.busy = false } }
             }
             Process {
@@ -1393,7 +1393,7 @@ OverlayWindow {
             readonly property int problems: items.filter(i => i.status === "fail" || i.status === "warn").length
             SettingRow {
                 label: hc.busy ? "Checking…" : hc.problems === 0 ? "Everything looks fine" : hc.problems + (hc.problems === 1 ? " thing to look at" : " things to look at")
-                description: "Services, disk, memory protection, GPU, power, temperatures, the AI, network, desktop and security. Same as `praxis-doctor` in a terminal."
+                description: "Services, disk, memory protection, GPU, power, temperatures, the AI, network, desktop and security. Same as `mkos-doctor` in a terminal."
                 Btn { icon: "refresh"; label: "Check again"; onClicked: hc.run() }
             }
             Repeater {
@@ -1406,7 +1406,7 @@ OverlayWindow {
                         visible: modelData.auto && (modelData.status === "fail" || modelData.status === "warn" || modelData.id === "tpm")
                         icon: hc.fixing === modelData.id ? "refresh" : "check"
                         label: hc.fixing === modelData.id ? "Fixing…" : "Fix"
-                        onClicked: { if (fixer.running) return; hc.fixing = modelData.id; fixer.command = ["praxis-doctor", "--fix", modelData.id]; fixer.running = true }
+                        onClicked: { if (fixer.running) return; hc.fixing = modelData.id; fixer.command = ["mkos-doctor", "--fix", modelData.id]; fixer.running = true }
                     }
                 }
             }

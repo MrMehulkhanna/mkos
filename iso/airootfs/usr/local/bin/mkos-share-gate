@@ -1,0 +1,972 @@
+#!/usr/bin/env python3
+"""
+mkos-share-gate — the lock on a shared screen.
+
+  mkos-share-gate serve  --listen PORT --to PORT --code CODE
+  mkos-share-gate client --host H --port P --listen PORT --code CODE
+
+Without this, mkos-share is an open screen and microphone-adjacent audio
+feed to anyone on the network. With it, a viewer needs a four-digit code the
+host is showing on its own screen.
+
+The code is a TLS pre-shared key, not a password checked after connecting.
+A client that does not know it fails the TLS handshake and never reaches
+the stream at all, and because the handshake derives the session key from
+the code, everything after it is encrypted too. No certificates, nothing to
+copy between machines — read six digits off the other screen.
+
+Four digits is 10^4, which is thin against an attacker who can try forever,
+so the server stops listening to an address for a while after a few bad
+handshakes, and the code is new for every session. That is proportionate to
+a home or office network; it is not a reason to expose the port to the
+internet.
+"""
+import argparse
+import json
+import re
+import os
+import secrets
+import socket
+import ssl
+import subprocess
+import sys
+import threading
+import time
+
+ALPHABET = "0123456789"
+CODE_LEN = 4  # four digits: easy to read across a desk; the lockout below keeps guessing slow
+MAX_FAILS = 5
+LOCKOUT_S = 60
+IDENTITY = b"mkos-share"
+import struct
+import subprocess
+
+BEACON_PORT = 5921
+MCAST_GRP = "239.255.79.20"
+
+
+def get_local_ip() -> str:
+    for target in ["8.8.8.8", "1.1.1.1", "10.255.255.255"]:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect((target, 1))
+            ip = s.getsockname()[0]
+            s.close()
+            if ip and not ip.startswith("127."):
+                return ip
+        except Exception:
+            pass
+    try:
+        out = subprocess.check_output(["ip", "-4", "-o", "addr", "show", "scope", "global"], text=True, stderr=subprocess.DEVNULL)
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 4 and "/" in parts[3]:
+                return parts[3].split("/")[0]
+    except Exception:
+        pass
+    return "127.0.0.1"
+
+
+def get_broadcast_addrs() -> list[str]:
+    addrs = ["<broadcast>", "255.255.255.255"]
+    local_ip = get_local_ip()
+    if local_ip and local_ip != "127.0.0.1":
+        parts = local_ip.split(".")
+        if len(parts) == 4:
+            addrs.append(f"{parts[0]}.{parts[1]}.{parts[2]}.255")
+    try:
+        out = subprocess.check_output(["ip", "-4", "-o", "addr", "show"], text=True, stderr=subprocess.DEVNULL)
+        for line in out.splitlines():
+            p = line.split()
+            if "brd" in p:
+                idx = p.index("brd")
+                if idx + 1 < len(p):
+                    addrs.append(p[idx + 1])
+    except Exception:
+        pass
+    try:
+        out = subprocess.check_output(["ip", "-4", "neigh"], text=True, stderr=subprocess.DEVNULL)
+        for line in out.splitlines():
+            p = line.split()
+            if p and p[0] != "FAILED" and not p[0].startswith("127."):
+                addrs.append(p[0])
+    except Exception:
+        pass
+    return list(dict.fromkeys(addrs))
+
+
+def start_beacon(listen_port: int) -> None:
+    def _loop() -> None:
+        hostname = socket.gethostname() or "MKOS PC"
+        b_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        b_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        b_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            b_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        except (AttributeError, OSError):
+            pass
+        try:
+            b_sock.bind(("", BEACON_PORT))
+        except OSError:
+            pass
+        try:
+            mreq = struct.pack("4sl", socket.inet_aton(MCAST_GRP), socket.INADDR_ANY)
+            b_sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        except OSError:
+            pass
+
+        while True:
+            ip = get_local_ip()
+            payload = json.dumps({
+                "service": "mkos-share",
+                "name": hostname,
+                "ip": ip,
+                "port": listen_port
+            }).encode("utf-8")
+            beacon_pkt = b"MKOS_BEACON:" + payload
+
+            targets = get_broadcast_addrs()
+            for tgt in targets:
+                try:
+                    b_sock.sendto(beacon_pkt, (tgt, BEACON_PORT))
+                except OSError:
+                    pass
+            try:
+                b_sock.sendto(beacon_pkt, (MCAST_GRP, BEACON_PORT))
+            except OSError:
+                pass
+
+            t_end = time.time() + 1.5
+            while time.time() < t_end:
+                rem = max(0.1, t_end - time.time())
+                b_sock.settimeout(rem)
+                try:
+                    data, addr = b_sock.recvfrom(2048)
+                    if data == b"MKOS_DISCOVER":
+                        b_sock.sendto(beacon_pkt, addr)
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+
+    threading.Thread(target=_loop, daemon=True).start()
+
+
+def scan(timeout: float = 1.2) -> list[dict]:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    except (AttributeError, OSError):
+        pass
+    try:
+        s.bind(("", 0))
+    except OSError:
+        pass
+    try:
+        mreq = struct.pack("4sl", socket.inet_aton(MCAST_GRP), socket.INADDR_ANY)
+        s.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    except OSError:
+        pass
+
+    discover_pkt = b"MKOS_DISCOVER"
+    targets = get_broadcast_addrs()
+    for tgt in targets:
+        try:
+            s.sendto(discover_pkt, (tgt, BEACON_PORT))
+        except OSError:
+            pass
+    try:
+        s.sendto(discover_pkt, (MCAST_GRP, BEACON_PORT))
+    except OSError:
+        pass
+
+    devices: dict[str, dict] = {}
+    my_ip = get_local_ip()
+    my_ips = {my_ip, "127.0.0.1"}
+    try:
+        for line in subprocess.check_output(["ip", "-4", "-o", "addr", "show"], text=True,
+                                            stderr=subprocess.DEVNULL).splitlines():
+            p = line.split()
+            if "inet" in p:
+                my_ips.add(p[p.index("inet") + 1].split("/")[0])
+    except Exception:
+        pass
+    end_time = time.time() + timeout
+    while time.time() < end_time:
+        rem = end_time - time.time()
+        if rem <= 0:
+            break
+        s.settimeout(min(rem, 0.3))
+        try:
+            data, addr = s.recvfrom(2048)
+            if data.startswith(b"MKOS_BEACON:"):
+                info = json.loads(data[len(b"MKOS_BEACON:"):].decode("utf-8"))
+                # The address the beacon came FROM is the one that reaches it.
+                # The address written inside is the sender's default route,
+                # which on a PC with Wi-Fi and a cable is the Wi-Fi one: over
+                # the cable the list showed an address that cannot connect.
+                ip = addr[0]
+                port = info.get("port", 5920)
+                name = info.get("name") or ip
+                key = f"{ip}:{port}"
+                devices[key] = {
+                    "name": name,
+                    "ip": ip,
+                    "port": port,
+                    "is_self": (ip in my_ips)
+                }
+        except (socket.timeout, OSError, json.JSONDecodeError):
+            pass
+    s.close()
+
+    # Phone hotspots and many routers drop broadcast/multicast between
+    # clients while still letting them connect to each other directly, so
+    # the beacon never arrives and the list stayed empty even with the other
+    # PC sharing. Knock on the share port of every address on each small
+    # local network (/22 or narrower: at most ~1000 quick connects, run in
+    # parallel) and list whatever answers.
+    import ipaddress
+    from concurrent.futures import ThreadPoolExecutor
+    candidates = []
+    try:
+        out = subprocess.check_output(["ip", "-4", "-o", "addr", "show"], text=True, stderr=subprocess.DEVNULL)
+        for line in out.splitlines():
+            p = line.split()
+            if "inet" not in p or p[1] == "lo":
+                continue
+            net = ipaddress.ip_interface(p[p.index("inet") + 1]).network
+            if net.prefixlen >= 22:
+                candidates += [str(h) for h in net.hosts()]
+    except Exception:
+        pass
+    known = {d["ip"] for d in devices.values()}
+    def knock(ip):
+        try:
+            with socket.create_connection((ip, 5920), timeout=0.4):
+                return ip
+        except OSError:
+            return None
+    todo = [ip for ip in dict.fromkeys(candidates) if ip not in known and ip not in my_ips]
+    if todo:
+        with ThreadPoolExecutor(max_workers=128) as ex:
+            for ip in ex.map(knock, todo):
+                if ip:
+                    # no reverse-DNS lookup: on a hotspot it times out per host
+                    devices[f"{ip}:5920"] = {"name": f"MKOS PC ({ip})", "ip": ip, "port": 5920, "is_self": False}
+
+    return list(devices.values())
+
+
+def new_code() -> str:
+    return "".join(secrets.choice(ALPHABET) for _ in range(CODE_LEN))
+
+
+def psk_from(code: str) -> bytes:
+    # The code is short and low-entropy, so stretch it before it becomes key
+    # material. PBKDF2 makes each guess cost something even if the handshake
+    # itself could somehow be replayed offline.
+    import hashlib
+    return hashlib.pbkdf2_hmac("sha256", code.encode(), b"mkos-share-v1", 200_000, 32)
+
+
+def pipe(a: socket.socket, b: socket.socket) -> None:
+    try:
+        while True:
+            # 1 MB reads: at ~100 Mb/s of video, 64 KB reads meant thousands
+            # of wake-ups a second and ~30 % CPU for the relay alone
+            data = a.recv(1 << 20)
+            if not data:
+                break
+            b.sendall(data)
+    except (OSError, ssl.SSLError):
+        pass
+    finally:
+        try:
+            b.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+
+def serve(listen_port: int, to_port: int, code: str, on_connect: str | None = None) -> int:
+    key = psk_from(code)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.set_ciphers("PSK")
+    ctx.set_psk_server_callback(lambda identity: key, IDENTITY.decode())
+
+    fails: dict[str, list] = {}
+    state_dir = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}") + "/mkos-share"
+    os.makedirs(state_dir, exist_ok=True)
+    clients_file = os.path.join(state_dir, "clients.json")
+    clients_lock = threading.Lock()
+    active_clients: dict[str, int] = {}
+
+    def update_clients(ip: str, delta: int):
+        with clients_lock:
+            cur = active_clients.get(ip, 0) + delta
+            if cur <= 0:
+                active_clients.pop(ip, None)
+            else:
+                active_clients[ip] = cur
+            try:
+                tmp = clients_file + ".tmp"
+                with open(tmp, "w") as f:
+                    json.dump({"count": len(active_clients), "clients": list(active_clients.keys())}, f)
+                os.replace(tmp, clients_file)
+            except Exception:
+                pass
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", listen_port))
+    srv.listen(8)
+    print(f"gate: listening on {listen_port}, forwarding to 127.0.0.1:{to_port}", flush=True)
+    start_beacon(listen_port)
+
+    while True:
+        try:
+            raw, addr = srv.accept()
+        except OSError:
+            break
+        ip = addr[0]
+        rec = fails.get(ip)
+        if rec and rec[0] >= MAX_FAILS and time.time() - rec[1] < LOCKOUT_S:
+            raw.close()
+            continue
+
+        def handle(raw=raw, ip=ip):
+            try:
+                tls = ctx.wrap_socket(raw, server_side=True)
+            except (ssl.SSLError, OSError):
+                r = fails.setdefault(ip, [0, 0.0])
+                r[0] += 1
+                r[1] = time.time()
+                print(f"gate: refused {ip} (wrong code, {r[0]})", flush=True)
+                try:
+                    raw.close()
+                except OSError:
+                    pass
+                return
+            fails.pop(ip, None)
+            print(f"gate: {ip} accepted", flush=True)
+            # A current viewer opens with one line naming its own screen, so
+            # the extra display is made pixel for pixel to match it instead of
+            # a fixed 1920x1080 stretched over a sharper panel. Older viewers
+            # send nothing; give up after a moment and use the default.
+            env = {**os.environ, 'MKOS_SHARE_PEER': ip}
+            try:
+                tls.settimeout(1.5)
+                hello = b""
+                while not hello.endswith(b"\n") and len(hello) < 64:
+                    ch = tls.recv(1)
+                    if not ch:
+                        break
+                    hello += ch
+                if hello == b"MKOS-AUDIO\n":
+                    env['MKOS_SHARE_AUDIO_LINK'] = "1"
+                m = re.fullmatch(rb"MKOS-RES (\d{3,5})x(\d{3,5})@(\d{2,3})(?: s([0-9]\.?[0-9]{0,3}))?(?: m(\d{1,4}))?\n", hello)
+                if m:
+                    env['MKOS_SHARE_RES'] = m.expand(rb"\1x\2@\3").decode()
+                    # the viewer's own scale, so the extra display looks the
+                    # same size as that screen's desktop
+                    if m.group(4) and 1.0 <= float(m.group(4)) <= 3.0:
+                        env['MKOS_SHARE_SCALE'] = m.group(4).decode()
+                    # its physical width, so the host can match sizes
+                    if m.group(5):
+                        env['MKOS_SHARE_MM'] = m.group(5).decode()
+            except (socket.timeout, ssl.SSLError, OSError):
+                pass
+            finally:
+                tls.settimeout(None)
+            audio_link = env.get('MKOS_SHARE_AUDIO_LINK') == "1"
+            if on_connect and not audio_link:
+                try:
+                    # tell the stream who connected, so it can pick a bitrate
+                    # to suit the link (Wi-Fi or a cable)
+                    r = subprocess.run(on_connect, shell=True, check=True, env=env,
+                                       stdout=subprocess.PIPE, text=True)
+                    sys.stdout.write(r.stdout); sys.stdout.flush()
+                    # tell the viewer which codec is coming, so it can pick
+                    # the hardware decoder directly with no frame buffering
+                    codec = [l for l in r.stdout.splitlines() if l.startswith("MKOS-CODEC ")]
+                    if codec:
+                        tls.sendall((codec[-1] + "\n").encode())
+                except Exception as e:
+                    print(f"gate: on-connect failed: {e}", flush=True)
+
+            up = None
+            t_giveup = time.time() + 4.0
+            while time.time() < t_giveup:
+                try:
+                    # the sound has its own loopback port, next to the picture's
+                    up = socket.create_connection(("127.0.0.1", to_port + (1 if audio_link else 0)), timeout=1.0)
+                    break
+                except OSError:
+                    time.sleep(0.2)
+            if not up:
+                print(f"gate: stream not reachable: {to_port}", flush=True)
+                tls.close()
+                return
+
+            update_clients(ip, +1)
+            t1 = threading.Thread(target=pipe, args=(tls, up), daemon=True)
+            t2 = threading.Thread(target=pipe, args=(up, tls), daemon=True)
+            t1.start()
+            t2.start()
+
+            def monitor_session():
+                t2.join()
+                update_clients(ip, -1)
+
+            threading.Thread(target=monitor_session, daemon=True).start()
+
+        threading.Thread(target=handle, daemon=True).start()
+    return 0
+
+
+def client(host: str, port: int, listen_port: int, code: str, res: str | None = None,
+           audio: bool = False) -> int:
+    key = psk_from(code)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    ctx.set_ciphers("PSK")
+    ctx.set_psk_client_callback(lambda hint: (IDENTITY.decode(), key))
+
+    try:
+        tls = ctx.wrap_socket(socket.create_connection((host, port), timeout=10),
+                              server_hostname=None)
+    except ssl.SSLError:
+        print("mkos-share-gate: the code was not accepted", file=sys.stderr)
+        return 4
+    except OSError as e:
+        print(f"mkos-share-gate: cannot reach {host}:{port} ({e})", file=sys.stderr)
+        return 3
+
+    if audio:
+        tls.sendall(b"MKOS-AUDIO\n")
+    elif res:
+        tls.sendall(f"MKOS-RES {res}\n".encode())
+
+    # A current host answers with the codec before the stream starts. Read
+    # it byte by byte so no stream data is swallowed; an older host sends
+    # the stream straight away (MPEG-TS starts with 0x47), kept for replay.
+    pending = b""
+    try:
+        tls.settimeout(0.01 if audio else 8)
+        while not pending.endswith(b"\n") and len(pending) < 64:
+            ch = tls.recv(1)
+            if not ch:
+                break
+            pending += ch
+            if pending[:1] == b"\x47":
+                break
+    except (socket.timeout, OSError):
+        pass
+    finally:
+        tls.settimeout(None)
+    if pending.startswith(b"MKOS-CODEC "):
+        print(f"gate: codec {pending.decode().split()[1]}", flush=True)
+        pending = b""
+
+    lsn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    lsn.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        lsn.bind(("127.0.0.1", listen_port))
+    except OSError:
+        lsn.bind(("127.0.0.1", 0))
+    actual_port = lsn.getsockname()[1]
+    lsn.listen(1)
+    print(f"gate: connected — play from 127.0.0.1:{actual_port}", flush=True)
+    local, _ = lsn.accept()
+    if pending:
+        local.sendall(pending)
+    t1 = threading.Thread(target=pipe, args=(tls, local), daemon=True)
+    t2 = threading.Thread(target=pipe, args=(local, tls), daemon=True)
+    t1.start(); t2.start()
+    t1.join()
+    return 0
+
+
+# ── mouse & keyboard sharing (lan-mouse) ────────────────────────────────
+# lan-mouse only accepts a peer whose certificate fingerprint it already
+# trusts. Swapping fingerprints by hand is fiddly, so two MKOS PCs swap
+# them over the same TLS-PSK link the screen share uses: the code that lets
+# a viewer in also vouches for the fingerprint it sends.
+MOUSE_PAIR_PORT = 5922
+LM_DIR = os.path.expanduser("~/.config/lan-mouse")
+LM_CONF = os.path.join(LM_DIR, "config.toml")
+OPPOSITE = {"left": "right", "right": "left", "top": "bottom", "bottom": "top"}
+
+
+def lm_fingerprint() -> str:
+    pem = os.path.join(LM_DIR, "lan-mouse.pem")
+    out = subprocess.check_output(["openssl", "x509", "-in", pem, "-noout", "-fingerprint", "-sha256"], text=True)
+    return out.strip().split("=", 1)[1].lower()
+
+
+def lm_read() -> dict:
+    """The parts of the config we manage: {fingerprint: name}, [client dicts]."""
+    fps, clients, cur = {}, [], None
+    try:
+        lines = open(LM_CONF).read().splitlines()
+    except OSError:
+        lines = []
+    section = ""
+    for ln in lines:
+        t = ln.strip()
+        if t.startswith("[[clients]]"):
+            cur = {}; clients.append(cur); section = "client"; continue
+        if t.startswith("[authorized_fingerprints]"):
+            section = "fp"; cur = None; continue
+        m = re.match(r'"?([^"=]+?)"?\s*=\s*(.+)$', t)
+        if not m:
+            continue
+        k, v = m.group(1).strip(), m.group(2).strip()
+        if section == "fp":
+            fps[k] = v.strip('"')
+        elif section == "client" and cur is not None:
+            cur[k] = v
+    return {"fps": fps, "clients": clients}
+
+
+def lm_write(fps: dict, clients: list) -> None:
+    os.makedirs(LM_DIR, exist_ok=True)
+    out = ["# MKOS: mouse & keyboard sharing (written by mkos-mouse)",
+           "port = 4242",
+           'release_bind = [ "KeyA", "KeyS", "KeyD", "KeyF" ]', "",
+           "[authorized_fingerprints]"]
+    out += [f'"{k}" = "{v}"' for k, v in fps.items()]
+    for c in clients:
+        out += ["", "[[clients]]"] + [f"{k} = {v}" for k, v in c.items()]
+    tmp = LM_CONF + ".tmp"
+    open(tmp, "w").write("\n".join(out) + "\n")
+    os.replace(tmp, LM_CONF)
+    # MKOS's own copy: lan-mouse rewrites config.toml itself and has
+    # dropped the paired PCs from it; mkos-mouse restores from this
+    open(os.path.join(LM_DIR, "config.mkos.toml"), "w").write("\n".join(out) + "\n")
+
+
+def lm_add_peer(name: str, ip: str, pos: str, fp: str) -> None:
+    """Trust the peer and place it at pos; one PC per side, newest wins."""
+    name = re.sub(r"[^A-Za-z0-9_.-]", "_", name)[:40] or ip
+    cfg = lm_read()
+    fps = {k: v for k, v in cfg["fps"].items() if v != name}
+    fps[fp] = name
+    keep = [c for c in cfg["clients"]
+            if c.get("position", "").strip('"') != pos and c.get("hostname", "").strip('"') != name]
+    keep.append({"position": f'"{pos}"', "hostname": f'"{name}"',
+                 "ips": f'["{ip}"]', "activate_on_startup": "true"})
+    lm_write(fps, keep)
+
+
+def mouse_listen(code: str) -> int:
+    key = psk_from(code)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.set_ciphers("PSK")
+    ctx.set_psk_server_callback(lambda identity: key, IDENTITY.decode())
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", MOUSE_PAIR_PORT))
+    srv.listen(4)
+    print(f"mouse: pairing on {MOUSE_PAIR_PORT}", flush=True)
+    while True:
+        raw, addr = srv.accept()
+        try:
+            raw.settimeout(10)
+            tls = ctx.wrap_socket(raw, server_side=True)
+            req = json.loads(tls.recv(4096).decode())
+            pos = req.get("pos")
+            if pos not in OPPOSITE or not re.fullmatch(r"[0-9a-f:]{95}", req.get("fp", "")):
+                raise ValueError("bad request")
+            # they put us at pos, so they sit on the opposite side of us
+            lm_add_peer(req.get("name", addr[0]), addr[0], OPPOSITE[pos], req["fp"])
+            tls.sendall(json.dumps({"fp": lm_fingerprint(), "name": socket.gethostname() or "mkos"}).encode())
+            tls.close()
+            print(f"mouse: paired with {addr[0]} ({req.get('name')}) on our {OPPOSITE[pos]}", flush=True)
+            subprocess.run(["mkos-mouse", "restart"], check=False)
+        except (OSError, ssl.SSLError, ValueError, json.JSONDecodeError) as e:
+            print(f"mouse: refused {addr[0]} ({e})", flush=True)
+        finally:
+            raw.close()
+
+
+def mouse_pair(host: str, pos: str, code: str) -> int:
+    key = psk_from(code)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    ctx.set_ciphers("PSK")
+    ctx.set_psk_client_callback(lambda hint: (IDENTITY.decode(), key))
+    try:
+        tls = ctx.wrap_socket(socket.create_connection((host, MOUSE_PAIR_PORT), timeout=8), server_hostname=None)
+    except ssl.SSLError:
+        print("mkos-mouse: the code was not accepted", file=sys.stderr); return 4
+    except OSError as e:
+        print(f"mkos-mouse: cannot reach {host} ({e}) — is mouse sharing on there?", file=sys.stderr); return 3
+    tls.sendall(json.dumps({"fp": lm_fingerprint(), "name": socket.gethostname() or "mkos", "pos": pos}).encode())
+    resp = json.loads(tls.recv(4096).decode())
+    lm_add_peer(resp.get("name", host), host, pos, resp["fp"])
+    print(f"paired: {resp.get('name', host)} is on the {pos}")
+    return 0
+
+
+# ── shared clipboard ────────────────────────────────────────────────────
+# Copy on one PC, paste on the other: text, images and files. Each copy is
+# sent once over the same TLS-PSK link as the screen share, to every PC the
+# mouse is shared with. Files travel as a tar and land in
+# ~/Downloads/From <PC>/, and the clipboard there then holds those files, so
+# pasting in a file manager copies them where you want. The hash of what
+# arrived is remembered so it is not sent straight back.
+CLIP_PORT = 5923
+CLIP_MAX = 512 * 1024 * 1024
+CLIP_STATE = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "mkos-clip")
+
+
+def _clip_seen(digest: str | None = None) -> str:
+    os.makedirs(CLIP_STATE, exist_ok=True)
+    f = os.path.join(CLIP_STATE, "last")
+    if digest is not None:
+        open(f, "w").write(digest)
+        return digest
+    try:
+        return open(f).read().strip()
+    except OSError:
+        return ""
+
+
+def _tls_ctx(server: bool, code: str):
+    key = psk_from(code)
+    if server:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.set_psk_server_callback(lambda identity: key, IDENTITY.decode())
+    else:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        ctx.set_psk_client_callback(lambda hint: (IDENTITY.decode(), key))
+    ctx.set_ciphers("PSK")
+    return ctx
+
+
+def _recv_exact(sock, n: int) -> bytes:
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = sock.recv(min(1 << 20, n - len(buf)))
+        if not chunk:
+            raise OSError("short read")
+        buf += chunk
+    return bytes(buf)
+
+
+def _files_digest(paths: list[str]) -> str:
+    """Names and contents only: the tar bytes differ between PCs (owner,
+    uid), so hashing them let a received copy look new and bounce back."""
+    import hashlib
+    h = hashlib.sha256()
+    for p in sorted(paths, key=lambda x: os.path.basename(x.rstrip("/"))):
+        for root, _dirs, files in (os.walk(p) if os.path.isdir(p) else [(os.path.dirname(p), [], [os.path.basename(p)])]):
+            for f in sorted(files):
+                fp = os.path.join(root, f)
+                h.update(os.path.relpath(fp, os.path.dirname(p.rstrip("/"))).encode())
+                with open(fp, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b""):
+                        h.update(chunk)
+    return h.hexdigest()
+
+
+def clip_listen(code: str) -> int:
+    import hashlib, io, tarfile, urllib.parse
+    ctx = _tls_ctx(True, code)
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", CLIP_PORT))
+    srv.listen(4)
+    print(f"clip: listening on {CLIP_PORT}", flush=True)
+    while True:
+        raw, addr = srv.accept()
+        try:
+            raw.settimeout(60)
+            tls = ctx.wrap_socket(raw, server_side=True)
+            hdr = b""
+            while not hdr.endswith(b"\n") and len(hdr) < 4096:
+                hdr += tls.recv(1)
+            h = json.loads(hdr)
+            size = int(h["size"])
+            if size > CLIP_MAX:
+                raise ValueError("too big")
+            data = _recv_exact(tls, size)
+            if h.get("kind") != "files":
+                _clip_seen(hashlib.sha256(data).hexdigest())
+            if h.get("kind") == "files":
+                who = re.sub(r"[^A-Za-z0-9 _.-]", "_", h.get("from", addr[0]))[:40]
+                dest = os.path.join(os.path.expanduser("~/Downloads"), f"From {who}")
+                os.makedirs(dest, exist_ok=True)
+                with tarfile.open(fileobj=io.BytesIO(data)) as t:
+                    t.extractall(dest, filter="data")
+                    names = sorted({m.name.split("/")[0] for m in t.getmembers()})
+                _clip_seen(_files_digest([os.path.join(dest, n) for n in names]))
+                uris = "\n".join("file://" + urllib.parse.quote(os.path.join(dest, n)) for n in names)
+                subprocess.run(["wl-copy", "--type", "text/uri-list"], input=uris.encode(), check=False)
+                print(f"clip: {len(names)} file(s) from {addr[0]} -> {dest}", flush=True)
+            else:
+                mime = h.get("mime", "text/plain;charset=utf-8")
+                if not re.fullmatch(r"[a-z]+/[A-Za-z0-9.+-]+(;charset=[A-Za-z0-9-]+)?", mime):
+                    raise ValueError("bad mime")
+                subprocess.run(["wl-copy", "--type", mime], input=data, check=False)
+                print(f"clip: {mime} {size} B from {addr[0]}", flush=True)
+        except (OSError, ssl.SSLError, ValueError, KeyError, json.JSONDecodeError) as e:
+            print(f"clip: refused {addr[0]} ({e})", flush=True)
+        finally:
+            raw.close()
+
+
+def clip_send(hosts: list[str], code: str) -> int:
+    """Send what is on this PC's clipboard now to each host."""
+    import hashlib, io, tarfile, urllib.parse
+    types = subprocess.run(["wl-paste", "--list-types"], capture_output=True, text=True).stdout.split()
+    if not types:
+        return 0
+    kind, mime, data, fdig = "data", None, b"", ""
+    if "text/uri-list" in types:
+        uris = subprocess.run(["wl-paste", "--type", "text/uri-list"], capture_output=True).stdout.decode(errors="replace")
+        paths = [urllib.parse.unquote(u[7:]) for u in uris.split() if u.startswith("file://")]
+        paths = [p for p in paths if os.path.exists(p)]
+        if paths:
+            fdig = _files_digest(paths)
+            if fdig == _clip_seen():
+                return 0              # these files just arrived from the other PC
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as t:
+                for p in paths:
+                    t.add(p, arcname=os.path.basename(p.rstrip("/")))
+            kind, data = "files", buf.getvalue()
+    if kind == "data":
+        for m in ("image/png", "image/jpeg", "text/plain;charset=utf-8", "UTF8_STRING", "text/plain"):
+            if m in types:
+                mime = "text/plain;charset=utf-8" if m == "UTF8_STRING" else m
+                data = subprocess.run(["wl-paste", "--no-newline", "--type", m], capture_output=True).stdout
+                break
+        if mime is None or not data:
+            return 0
+    if len(data) > CLIP_MAX:
+        print("clip: too big to send", file=sys.stderr); return 0
+    digest = fdig if kind == "files" else hashlib.sha256(data).hexdigest()
+    if digest == _clip_seen():
+        return 0                      # it just arrived from the other PC
+    _clip_seen(digest)
+    hdr = json.dumps({"kind": kind, "mime": mime, "size": len(data),
+                      "from": socket.gethostname() or "mkos"}).encode() + b"\n"
+    for host in hosts:
+        try:
+            with _tls_ctx(False, code).wrap_socket(socket.create_connection((host, CLIP_PORT), timeout=5),
+                                                   server_hostname=None) as tls:
+                tls.sendall(hdr + data)
+        except (OSError, ssl.SSLError) as e:
+            print(f"clip: could not send to {host} ({e})", file=sys.stderr)
+    return 0
+
+
+# ── local pointer for the shared screen ─────────────────────────────────
+# A pointer painted into the video moves only when a frame arrives, ~50 ms
+# behind the hand. Instead the host sends where its pointer is on the
+# shared screen (a few bytes over UDP, ~1 ms on a cable) and the viewer
+# draws it itself at its own refresh rate, so it moves like a pointer on a
+# monitor plugged into that PC. While the pointer is on the shared screen
+# the host hides its own, so the video does not carry a second, slow one.
+CURSOR_PORT = 5924
+
+
+def _hypr(cmd: bytes) -> bytes:
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "hypr", sig, ".socket.sock")
+    s = socket.socket(socket.AF_UNIX)
+    s.connect(path)
+    s.sendall(cmd)
+    out = b""
+    while True:
+        chunk = s.recv(65536)
+        if not chunk:
+            break
+        out += chunk
+    s.close()
+    return out
+
+
+def cursor_send(peer: str, output: str, hz: int = 240) -> int:
+    out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    hidden = None
+    last = None
+    mon, mon_t = None, 0.0
+    period = 1.0 / hz
+    try:
+        while True:
+            t0 = time.monotonic()
+            if t0 - mon_t > 1.0:                     # the screen's place can change
+                ms = json.loads(_hypr(b"j/monitors"))
+                mon = next((m for m in ms if m["name"] == output), None)
+                mon_t = t0
+                if mon is None:
+                    break                            # sharing stopped
+            c = json.loads(_hypr(b"j/cursorpos"))
+            lw, lh = mon["width"] / mon["scale"], mon["height"] / mon["scale"]
+            lx, ly = c["x"] - mon["x"], c["y"] - mon["y"]
+            inside = 0 <= lx < lw and 0 <= ly < lh
+            if inside != hidden:
+                _hypr(b"eval hl.config({ cursor = { invisible = %s } })" % (b"true" if inside else b"false"))
+                hidden = inside
+            # in the shared screen's own pixels, which the viewer shows 1:1
+            # last field: the pointer's size on that screen, so the viewer
+            # draws it exactly as big as this PC would
+            size = round(int(os.environ.get("XCURSOR_SIZE", "24")) * mon["scale"])
+            msg = b"%d %d %d %d" % (round(lx * mon["scale"]), round(ly * mon["scale"]), 1 if inside else 0, size)
+            if msg != last:
+                out.sendto(msg, (peer, CURSOR_PORT))
+                last = msg
+            time.sleep(max(0.0, period - (time.monotonic() - t0)))
+    finally:
+        if hidden:
+            try:
+                _hypr(b"eval hl.config({ cursor = { invisible = false } })")
+            except OSError:
+                pass
+        try:
+            out.sendto(b"0 0 0 24", (peer, CURSOR_PORT))
+        except OSError:
+            pass
+    return 0
+
+
+def pointer_png(dest: str, want: int = 48) -> str:
+    """The desktop's own arrow (Xcursor 'default' from the icon theme) as a
+    PNG, so the pointer drawn on the viewer looks exactly like the host's.
+    Returns 'w h xhot yhot' of the image written."""
+    import struct, zlib
+    theme = "Adwaita"
+    try:
+        for line in open("/usr/share/icons/default/index.theme"):
+            if line.startswith("Inherits="):
+                theme = line.split("=", 1)[1].split(",")[0].strip()
+    except OSError:
+        pass
+    for d in (os.path.expanduser(f"~/.icons/{theme}/cursors"), f"/usr/share/icons/{theme}/cursors",
+              "/usr/share/icons/Adwaita/cursors"):
+        for n in ("default", "left_ptr"):
+            f = os.path.join(d, n)
+            if os.path.exists(f):
+                break
+        else:
+            continue
+        break
+    data = open(f, "rb").read()
+    ntoc = struct.unpack_from("<I", data, 12)[0]
+    best = None
+    for i in range(ntoc):
+        typ, sub, pos = struct.unpack_from("<III", data, 16 + i * 12)
+        if typ != 0xfffd0002:
+            continue
+        w, h, xh, yh = struct.unpack_from("<IIII", data, pos + 16)
+        if best is None or abs(w - want) < abs(best[0] - want):
+            best = (w, h, xh, yh, pos + 36)
+    w, h, xh, yh, off = best
+    px = data[off:off + w * h * 4]                    # premultiplied ARGB, little endian
+    rows = b""
+    for y in range(h):
+        row = bytearray()
+        for x in range(w):
+            b, g, r, a = px[(y * w + x) * 4:(y * w + x) * 4 + 4]
+            if a:                                     # un-premultiply
+                r, g, b = (min(255, c * 255 // a) for c in (r, g, b))
+            row += bytes((r, g, b, a))
+        rows += b"\x00" + bytes(row)
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)) \
+        + chunk(b"IDAT", zlib.compress(rows, 6)) + chunk(b"IEND", b"")
+    open(dest, "wb").write(png)
+    return f"{w} {h} {xh} {yh}"
+
+
+def cursor_recv() -> int:
+    """Print 'x y visible' lines for the overlay to follow."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("0.0.0.0", CURSOR_PORT))
+    while True:
+        data, _ = s.recvfrom(64)
+        if re.fullmatch(rb"-?\d{1,5} -?\d{1,5} [01]( \d{1,3})?", data):
+            sys.stdout.write(data.decode() + "\n")
+            sys.stdout.flush()
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(add_help=True)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("serve")
+    s.add_argument("--listen", type=int, required=True)
+    s.add_argument("--to", type=int, required=True)
+    s.add_argument("--code", required=True)
+    s.add_argument("--on-connect", default=None)
+    c = sub.add_parser("client")
+    c.add_argument("--host", required=True)
+    c.add_argument("--port", type=int, required=True)
+    c.add_argument("--listen", type=int, required=True)
+    c.add_argument("--code", required=True)
+    c.add_argument("--res", help="this screen, WxH@Hz, so the host matches it")
+    c.add_argument("--audio", action="store_true", help="the sound link, not the picture")
+    ml = sub.add_parser("mouse-listen")
+    ml.add_argument("--code", required=True)
+    mp = sub.add_parser("mouse-pair")
+    mp.add_argument("--host", required=True)
+    mp.add_argument("--pos", required=True, choices=sorted(OPPOSITE))
+    mp.add_argument("--code", required=True)
+    mf = sub.add_parser("mouse-forget")
+    mf.add_argument("--pos", required=True, choices=sorted(OPPOSITE))
+    cl = sub.add_parser("clip-listen")
+    cl.add_argument("--code", required=True)
+    cs = sub.add_parser("clip-send")
+    cs.add_argument("--code", required=True)
+    cs.add_argument("hosts", nargs="+")
+    cu = sub.add_parser("cursor-send")
+    cu.add_argument("--peer", required=True)
+    cu.add_argument("--output", required=True)
+    sub.add_parser("cursor-recv")
+    pp = sub.add_parser("pointer-png")
+    pp.add_argument("dest")
+    sub.add_parser("newcode")
+    sub.add_parser("scan")
+    a = ap.parse_args(argv)
+    if a.cmd == "newcode":
+        print(new_code()); return 0
+    if a.cmd == "scan":
+        print(json.dumps(scan()))
+        return 0
+    if a.cmd == "cursor-send":
+        return cursor_send(a.peer, a.output)
+    if a.cmd == "cursor-recv":
+        return cursor_recv()
+    if a.cmd == "pointer-png":
+        print(pointer_png(a.dest)); return 0
+    if a.cmd == "clip-listen":
+        return clip_listen(a.code)
+    if a.cmd == "clip-send":
+        return clip_send(a.hosts, a.code)
+    if a.cmd == "mouse-listen":
+        return mouse_listen(a.code)
+    if a.cmd == "mouse-pair":
+        return mouse_pair(a.host, a.pos, a.code)
+    if a.cmd == "mouse-forget":
+        cfg = lm_read()
+        lm_write(cfg["fps"], [c for c in cfg["clients"] if c.get("position", "").strip('"') != a.pos])
+        return 0
+    if a.cmd == "serve":
+        return serve(a.listen, a.to, a.code, a.on_connect)
+    return client(a.host, a.port, a.listen, a.code, a.res, a.audio)
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except KeyboardInterrupt:
+        sys.exit(0)

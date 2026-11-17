@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  mkos-display — change a monitor's mode or scale safely, and keep it.
+#
+#    mkos-display set OUTPUT MODE [SCALE]   e.g. mkos-display set HDMI-A-1 1920x1080@200
+#                                             applies it now and goes back on its own
+#                                             after 15 s unless you run "keep" — so a
+#                                             mode the monitor can't show never strands you
+#    mkos-display keep                      keep the change (also after a restart)
+#    mkos-display revert                    go back now
+#    mkos-display status                    pending change, if any (Settings shows it)
+#    mkos-display list                      monitors and the modes they offer
+#    mkos-display color [BRIGHT] [SAT]      OLED colour: percentages, 100 = untouched.
+#                                             e.g. mkos-display color 130 115
+#    mkos-display color off                 back to plain sRGB at 8 bits
+#    mkos-display color show                what each panel is being driven at
+#
+#  Kept settings live in ~/.config/hypr/mkos-local.lua (this computer only),
+#  one line per monitor marked "-- mkos-display".
+# ============================================================================
+set -uo pipefail
+RUN=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/mkos
+PENDING=$RUN/display.pending
+LOCAL=$HOME/.config/hypr/mkos-local.lua
+WAIT=${MKOS_DISPLAY_WAIT:-15}
+mkdir -p "$RUN"
+
+if [ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+    sig=$(ls -t "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/hypr" 2>/dev/null | head -1)
+    [ -n "$sig" ] && export HYPRLAND_INSTANCE_SIGNATURE="$sig"
+fi
+
+die() { echo "mkos-display: $*" >&2; exit 1; }
+mon() { hyprctl -j monitors all 2>/dev/null | jq -c --arg o "$1" '.[] | select(.name == $o)'; }
+apply() {   # output mode scale
+    hyprctl eval "hl.monitor({ output = \"$1\", mode = \"$2\", position = \"auto\", scale = $3 })" >/dev/null
+}
+current() { # output → "mode scale"
+    local m; m=$(mon "$1"); [ -n "$m" ] || return 1
+    jq -r '"\(.width)x\(.height)@\(.refreshRate * 100 | round / 100) \(.scale)"' <<<"$m"
+}
+
+# ── OLED colour ─────────────────────────────────────────────────────────
+# Hyprland drives every output through the srgb preset at 8 bits unless told
+# otherwise. On a wide-gamut OLED that is the narrowest pipeline the panel
+# has, and it is why colour looks flat next to the same laptop on Windows,
+# where the panel runs at its own gamut. The EDID advertises the headroom.
+#
+# The colour keys are only honoured when the rule names a real output — a
+# rule with output = "" silently drops them — so this writes one line per
+# panel into mkos-local.lua rather than touching the shipped config.
+oled_outputs() {   # internal panels whose EDID names a Samsung OLED (ATNA…)
+    local c conn
+    for c in /sys/class/drm/card*-eDP-*; do
+        [ -r "$c/edid" ] || continue
+        grep -qa ATNA "$c/edid" 2>/dev/null || continue
+        conn=${c##*/}; conn=${conn#card*-}
+        echo "$conn"
+    done | sort -u
+}
+
+colour_line() {   # output bright sat  → a mkos-local.lua rule
+    local out=$1 b=$2 sat=$3 m mode scale
+    m=$(mon "$out") || return 1
+    [ -n "$m" ] || return 1
+    mode=$(jq -r '"\(.width)x\(.height)@\(.refreshRate * 100 | round / 100)"' <<<"$m")
+    scale=$(jq -r .scale <<<"$m")
+    if [ "$b" = off ]; then
+        printf 'hl.monitor({ output = "%s", mode = "%s", position = "auto", scale = %s })  -- mkos-display\n' \
+            "$out" "$mode" "$scale"
+    else
+        printf 'hl.monitor({ output = "%s", mode = "%s", position = "auto", scale = %s, cm = "wide", bitdepth = 10, sdrbrightness = %s, sdrsaturation = %s })  -- mkos-display\n' \
+            "$out" "$mode" "$scale" "$b" "$sat"
+    fi
+}
+
+case "${1:-status}" in
+    set)
+        out=${2:?output}; mode=${3:?mode}; scale=${4:-}
+        m=$(mon "$out"); [ -n "$m" ] || die "no monitor called $out"
+        mode=${mode%Hz}
+        jq -e --arg md "$mode" '[.availableModes[] | rtrimstr("Hz")] | any(. == $md or (split("@")[0] == ($md | split("@")[0]) and ((split("@")[1] | tonumber) - (($md | split("@")[1]) // "0" | tonumber) | fabs) < 0.6))' <<<"$m" >/dev/null \
+            || die "$out doesn't offer $mode (mkos-display list)"
+        [ -n "$scale" ] || scale=$(jq -r .scale <<<"$m")
+        read -r pmode pscale <<<"$(current "$out")"
+        # a previous change that was never confirmed goes back first
+        [ -f "$PENDING" ] && "$0" revert >/dev/null
+        until=$(( $(date +%s) + WAIT ))
+        printf 'output=%s\nmode=%s\nscale=%s\nold_mode=%s\nold_scale=%s\nuntil=%s\n' \
+            "$out" "$mode" "$scale" "$pmode" "$pscale" "$until" >"$PENDING"
+        apply "$out" "$mode" "$scale"
+        # goes back by itself unless this exact change was kept (or replaced) meanwhile
+        setsid bash -c "sleep $WAIT; grep -qx 'until=$until' '$PENDING' 2>/dev/null && '$0' revert" >/dev/null 2>&1 &
+        echo "applied $out $mode ×$scale — 'mkos-display keep' within ${WAIT}s, or it goes back"
+        ;;
+    keep)
+        [ -f "$PENDING" ] || { echo "nothing to keep"; exit 0; }
+        out=$(sed -n 's/^output=//p' "$PENDING"); mode=$(sed -n 's/^mode=//p' "$PENDING"); scale=$(sed -n 's/^scale=//p' "$PENDING")
+        rm -f "$PENDING"
+        mkdir -p "${LOCAL%/*}"; touch "$LOCAL"
+        grep -v "output = \"$out\".*-- mkos-display" "$LOCAL" >"$LOCAL.tmp" || true
+        printf 'hl.monitor({ output = "%s", mode = "%s", position = "auto", scale = %s })  -- mkos-display\n' "$out" "$mode" "$scale" >>"$LOCAL.tmp"
+        mv -f "$LOCAL.tmp" "$LOCAL"
+        echo "kept $out $mode ×$scale"
+        ;;
+    revert)
+        [ -f "$PENDING" ] || { echo "nothing to revert"; exit 0; }
+        out=$(sed -n 's/^output=//p' "$PENDING"); om=$(sed -n 's/^old_mode=//p' "$PENDING"); os=$(sed -n 's/^old_scale=//p' "$PENDING")
+        rm -f "$PENDING"
+        apply "$out" "$om" "$os"
+        command -v notify-send >/dev/null && notify-send -a MKOS -i video-display "Display settings went back" "$out is at $om again."
+        echo "reverted $out to $om ×$os"
+        ;;
+    status)
+        if [ -f "$PENDING" ]; then
+            left=$(( $(sed -n 's/^until=//p' "$PENDING") - $(date +%s) ))
+            printf '{"pending":true,"output":"%s","mode":"%s","left":%d}\n' "$(sed -n 's/^output=//p' "$PENDING")" "$(sed -n 's/^mode=//p' "$PENDING")" "$(( left > 0 ? left : 0 ))"
+        else
+            echo '{"pending":false}'
+        fi
+        ;;
+    color)
+        sub=${2:-show}
+        if [ "$sub" = show ]; then
+            hyprctl -j monitors 2>/dev/null | jq -r '.[] |
+                "  \(.name)  \(.colorManagementPreset)  \(.currentFormat)  brightness \(.sdrBrightness)  saturation \(.sdrSaturation)"'
+            echo
+            echo "  OLED panels detected: $(oled_outputs | tr '\n' ' ')"
+            exit 0
+        fi
+        outs=$(oled_outputs)
+        [ -n "$outs" ] || die "no OLED panel found (mkos-display color show)"
+        if [ "$sub" = off ]; then
+            bright=off; sat=off
+        else
+            # percentages, because that is how the vendor tools put it
+            bright=$(awk "BEGIN{printf \"%.2f\", ${2:-130}/100}")
+            sat=$(awk "BEGIN{printf \"%.2f\", ${3:-115}/100}")
+        fi
+        touch "$LOCAL"
+        for out in $outs; do
+            line=$(colour_line "$out" "$bright" "$sat") || continue
+            # replace this panel's rule, keep every other line as it is
+            grep -v "hl.monitor({ output = \"$out\"" "$LOCAL" > "$LOCAL.new" 2>/dev/null || true
+            printf '%s\n' "$line" >> "$LOCAL.new"
+            mv "$LOCAL.new" "$LOCAL"
+            hyprctl eval "$line" >/dev/null 2>&1 || true
+            echo "  $out → $([ "$bright" = off ] && echo "sRGB, 8-bit" || echo "wide gamut, 10-bit, brightness ${2:-130}%, saturation ${3:-115}%")"
+        done
+        sleep 1
+        hyprctl -j monitors 2>/dev/null | jq -r '.[] | select(.name | startswith("eDP")) |
+            "  now: \(.colorManagementPreset) \(.currentFormat) brightness \(.sdrBrightness) saturation \(.sdrSaturation)"'
+        ;;
+    list)
+        hyprctl -j monitors all | jq -r '.[] | "\(.name)  \(.description)\n  now: \(.width)x\(.height)@\(.refreshRate * 100 | round / 100)  scale \(.scale)\n  modes: \(.availableModes | join(" "))"'
+        ;;
+    project)
+        # Every screen other than the built-in one: a monitor, and the
+        # shared screen another PC is showing. Each one keeps the mode it
+        # had (a monitor set to 120 Hz is not pushed back to its "preferred"
+        # 200 Hz), and Extend puts back the layout arranged in Settings.
+        # Before, only the first extra screen was handled and Extend always
+        # lined things up to the right with preferred modes.
+        mode=${2:-extend}
+        all_mons=$(hyprctl -j monitors all 2>/dev/null || echo "[]")
+        int=$(jq -r '.[] | select(.name | startswith("eDP")) | .name' <<<"$all_mons" | head -1)
+        [ -n "$int" ] || int=$(jq -r '.[0].name // empty' <<<"$all_mons")
+        mapfile -t exts < <(jq -r --arg im "$int" '.[] | select(.name != $im) | .name' <<<"$all_mons")
+        if [ ${#exts[@]} -eq 0 ]; then
+            command -v notify-send >/dev/null && notify-send -a MKOS -i video-display "No external monitor detected" "Connect a display via HDMI or DisplayPort to project."
+            echo "mkos-display: no external display detected" >&2
+            exit 1
+        fi
+        MODES="${XDG_CACHE_HOME:-$HOME/.cache}/mkos-display/modes"
+        mkdir -p "${MODES%/*}"; touch "$MODES"
+        # remember each enabled screen's mode and scale before changing anything
+        jq -r '.[] | select(.disabled != true) | "\(.name) \(.width)x\(.height)@\(.refreshRate * 100 | round / 100) \(.scale)"' <<<"$all_mons" |
+        while read -r n m sc; do
+            grep -v "^$n " "$MODES" > "$MODES.tmp" 2>/dev/null; echo "$n $m $sc" >> "$MODES.tmp"; mv "$MODES.tmp" "$MODES"
+        done
+        mode_of()  { awk -v n="$1" '$1==n{print $2}' "$MODES" | tail -1; }
+        scale_of() { awk -v n="$1" '$1==n{print $3}' "$MODES" | tail -1; }
+        int_mode=$(mode_of "$int"); [ -n "$int_mode" ] || int_mode=preferred
+        int_scale=$(scale_of "$int"); [ -n "$int_scale" ] || int_scale=auto
+        lua="hl.monitor({ output = \"$int\", disabled = false, mode = \"$int_mode\", position = \"0x0\", scale = $int_scale, mirror = \"\" })"
+        x=$(awk "BEGIN{print int(${int_mode%%x*} / ($int_scale == \"auto\" ? 1 : $int_scale))}" 2>/dev/null || echo 1920)
+        for e in "${exts[@]}"; do
+            em=$(mode_of "$e"); [ -n "$em" ] || em=preferred
+            es=$(scale_of "$e"); [ -n "$es" ] || es=1
+            case "$mode" in
+                pc)        [[ "$e" == HEADLESS-* ]] && continue   # sharing stays up
+                           lua+=" hl.monitor({ output = \"$e\", disabled = true })" ;;
+                duplicate) lua+=" hl.monitor({ output = \"$e\", disabled = false, mode = \"$em\", position = \"0x0\", scale = $es, mirror = \"$int\" })" ;;
+                *)         lua+=" hl.monitor({ output = \"$e\", disabled = false, mode = \"$em\", position = \"${x}x0\", scale = $es, mirror = \"\" })"
+                           x=$(( x + ${em%%x*} )) ;;
+            esac
+        done
+        [ "$mode" = second ] && lua+=" hl.monitor({ output = \"$int\", disabled = true })"
+        hyprctl eval "$lua" >/dev/null
+        # Extend: the arrangement from Settings > Display, if there is one
+        if [ "$mode" = extend ] && command -v mkos-share >/dev/null; then
+            sleep 0.5; mkos-share restore-layout >/dev/null 2>&1 || true
+        fi
+        echo "projected to $mode (internal: $int, others: ${exts[*]})"
+        ;;
+    -h|--help|help) sed -n '3,16p' "$0" | sed 's/^# \?//' ;;
+    *) die "unknown command $1 (mkos-display help)" ;;
+esac

@@ -1,0 +1,5 @@
+#!/bin/sh
+# Installing into one existing partition is now a choice inside mkos-install
+# ("In one existing partition I choose"), which also checks the partition first.
+echo "[mkos] installing into an existing partition is part of 'mkos-install' now — starting it…"
+exec /usr/local/bin/mkos-install "$@"

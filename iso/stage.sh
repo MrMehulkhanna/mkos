@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# stage.sh DEST [AUR_REPO_DIR] — assemble everything Praxis adds on top of the
+# stage.sh DEST [AUR_REPO_DIR] — assemble everything MKOS adds on top of the
 # Arch live system into DEST, laid out like the image's root file system:
 #   iso/airootfs/ overlay, the desktop package list, /etc/skel (shell, Hyprland,
 #   swaync, rofi, wallpapers), /opt/aios (tracked files only) and the bundled
-#   [praxis] repository. build.sh stages into the archiso profile; the install
+#   [mkos] repository. build.sh stages into the archiso profile; the install
 #   test stages into a scratch tree and points the installer at it.
 set -euo pipefail
 ISO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -13,8 +13,8 @@ SKEL=$DEST/etc/skel
 
 cp -a "$ISO_DIR/airootfs/." "$DEST/"
 # the desktop half of packages.x86_64 — the installer puts exactly this on targets
-install -d "$DEST/usr/local/share/praxis"
-sed '/^# @live-only/,$d' "$ISO_DIR/packages.x86_64" | grep -vE '^\s*(#|$)' >"$DEST/usr/local/share/praxis/desktop-packages.txt"
+install -d "$DEST/usr/local/share/mkos"
+sed '/^# @live-only/,$d' "$ISO_DIR/packages.x86_64" | grep -vE '^\s*(#|$)' >"$DEST/usr/local/share/mkos/desktop-packages.txt"
 
 install -d "$SKEL/.config" "$SKEL/.local/share/wallpapers"
 rsync -a --exclude settings.json --exclude eyecomfort.json "$REPO/desktop/quickshell/" "$SKEL/.config/quickshell/"
@@ -30,6 +30,6 @@ git -C "$REPO" ls-files -z -- . ':!iso' ':!.github' ':!tests' ':!desktop/wallpap
 install -Dm644 "$REPO/requirements.txt" "$DEST/usr/local/share/aios/aios-requirements.txt"
 install -Dm755 "$REPO/tools/aios-hardware" "$DEST/usr/local/libexec/aios-hardware"
 if [ -n "$AURREPO" ]; then
-    install -d "$DEST/opt/praxis-repo"
-    cp -a "$AURREPO/." "$DEST/opt/praxis-repo/"
+    install -d "$DEST/opt/mkos-repo"
+    cp -a "$AURREPO/." "$DEST/opt/mkos-repo/"
 fi

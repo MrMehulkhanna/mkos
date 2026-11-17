@@ -63,7 +63,7 @@ def test_valid_bearer_token_accepted(client, valid_token):
 def test_valid_header_token_accepted(client, valid_token):
     res = client.get("/api/status", headers={
         "Host": "127.0.0.1:8778",
-        "X-Praxis-Token": valid_token
+        "X-MKOS-Token": valid_token
     })
     assert res.status_code == 200
 

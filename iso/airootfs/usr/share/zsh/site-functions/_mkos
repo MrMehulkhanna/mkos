@@ -1,0 +1,47 @@
+#compdef mkos
+# zsh completion for the `mkos` meta-command.  Discovers subcommands from
+# mkos-* binaries on PATH so this also covers any tools added later.
+
+_mkos() {
+    local -a subs descs
+    local ln name desc
+
+    # Static descriptions matching the meta-command's own table.
+    typeset -A KNOWN=(
+        [install]="Smart installer (dual-boot or full-disk)"
+        [install-partition]="Install into a specific existing partition"
+        [welcome]="First-login TUI wizard"
+        [doctor]="Health report"
+        [update]="Update pacman + AIOS + venv"
+        [net-bond]="Combine multiple network interfaces"
+        [palette]="Rofi omnibox (apps, files, AI, calc, shell)"
+        [wallpaper]="Still or LIVE wallpapers"
+        [models]="LLM catalog + downloader"
+        [genie]="Voice conversation loop"
+        [ai-shell]="Persistent AI REPL"
+        [power]="Power menu"
+        [quicknote]="Quick note into ~/aios/notes/"
+        [ai-setup]="Set up the AIOS backend"
+    )
+
+    if (( CURRENT == 2 )); then
+        # collect subcommand stems
+        for ln in ${(f)"$(whence -pa 'mkos-*' 2>/dev/null)"}; do
+            name=${ln:t#mkos-}
+            desc=${KNOWN[$name]:-"mkos $name"}
+            descs+=("$name:$desc")
+        done
+        descs+=("help:show the command index")
+        _describe -t subcommands 'mkos subcommand' descs && return 0
+    fi
+
+    # Deeper: hand off to the child binary's own completion if any.
+    local sub=${words[2]}
+    if (( $+functions[_mkos-$sub] )); then
+        _mkos-$sub
+        return
+    fi
+    _files
+}
+
+_mkos "$@"

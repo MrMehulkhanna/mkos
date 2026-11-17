@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# mkos-first-boot — one welcome notification per account (every boot on
+# live media, where nothing persists). On live media it carries an
+# "Install MKOS Linux" action that opens the installer.
+set -uo pipefail
+command -v notify-send >/dev/null || exit 0
+
+# The notification daemon starts with the compositor; give it a moment.
+for _ in $(seq 1 40); do
+    busctl --user status org.freedesktop.Notifications >/dev/null 2>&1 && break
+    sleep 0.5
+done
+
+# Ensure speakers and microphone are unmuted on first boot (live session & installed)
+if command -v amixer >/dev/null 2>&1; then
+    amixer sset Master unmute 80% >/dev/null 2>&1 || true
+    amixer sset Speaker unmute 80% >/dev/null 2>&1 || true
+    amixer sset Headphone unmute 80% >/dev/null 2>&1 || true
+    amixer sset Mic unmute 80% >/dev/null 2>&1 || true
+    amixer sset Capture unmute 80% >/dev/null 2>&1 || true
+fi
+if command -v wpctl >/dev/null 2>&1; then
+    wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 >/dev/null 2>&1 || true
+    wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 80% >/dev/null 2>&1 || true
+    wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0 >/dev/null 2>&1 || true
+    wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SOURCE@ 80% >/dev/null 2>&1 || true
+fi
+
+if [ -d /run/archiso ]; then
+    action=$(notify-send -a "MKOS" -u normal -t 0 --wait \
+        --action=install="Install MKOS Linux" \
+        "Welcome to MKOS Linux — live session" \
+        "Everything is running from the USB drive. Install MKOS on this computer from here or from the dock — next to Windows, in free space, or on a whole disk.")
+    [ "$action" = "install" ] && exec /usr/local/bin/mkos-installer
+    exit 0
+fi
+
+touch "$HOME/.mkos-first-boot-done"
+
+# If timezone is still UTC on first boot, auto-detect local timezone and sync clock in background
+if command -v timedatectl >/dev/null 2>&1 && command -v mkos-time >/dev/null 2>&1; then
+    tz=$(timedatectl show -p Timezone --value 2>/dev/null || true)
+    if [ "$tz" = "UTC" ] || [ -z "$tz" ]; then
+        ( mkos-time auto >/dev/null 2>&1 & )
+    fi
+fi
+if [ -f "$HOME/.aios-setup-done" ]; then
+    notify-send -a "MKOS" -t 12000 "Welcome to MKOS Linux" \
+        "Super+Space opens the palette, Super+H types what you say, Super+O is Control Center. Type 'mkos' in a terminal to see every command."
+    exit 0
+fi
+action=$(notify-send -a "MKOS" -u normal -t 0 --wait \
+    --action=ai="Set up the AI" --action=keys="Keyboard shortcuts" \
+    "Welcome to MKOS Linux" \
+    "Set up the local AI assistant now (a few minutes, needs internet) — or later from Settings › AI. Super+Space opens the palette.")
+case "$action" in
+    ai)   exec kitty --class mkos-setup --title "Set up the AI" -e bash -c 'aios-setup; echo; read -rp "Press Enter to close… " _' ;;
+    keys) exec quickshell ipc -p "$HOME/.config/quickshell/shell.qml" call shell settings Keyboard ;;
+esac

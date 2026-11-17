@@ -5,7 +5,7 @@ import "root:/Config"
 import "root:/Services"
 import "root:/components"
 
-// Praxis Share — use another machine's screen as a display of this one.
+// MKOS Share — use another machine's screen as a display of this one.
 //
 // The layout is deliberately one column of a few named sections rather than a
 // wall of controls: the stage shows what you have, one block decides what to
@@ -286,7 +286,7 @@ OverlayWindow {
                     label: "Allow screen share"
                     description: Share.serving
                         ? "Advertising on local Wi-Fi. The other PC can discover this screen automatically."
-                        : "Turn on to let another Praxis PC connect as a second display or mirror."
+                        : "Turn on to let another MKOS PC connect as a second display or mirror."
                     Toggle {
                         checked: Share.serving
                         onToggled: v => v ? Share.start() : Share.stop()
@@ -527,7 +527,7 @@ OverlayWindow {
                                     Column {
                                         anchors.verticalCenter: parent.verticalCenter; spacing: 1
                                         Text {
-                                            text: (modelData.name || "Praxis PC") + (modelData.is_self ? " (This PC)" : "")
+                                            text: (modelData.name || "MKOS PC") + (modelData.is_self ? " (This PC)" : "")
                                             color: Theme.text
                                             font.family: Theme.font; font.pixelSize: Theme.fontSm; font.weight: Font.DemiBold
                                         }

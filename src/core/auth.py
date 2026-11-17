@@ -14,7 +14,7 @@ Two checks, both cheap, both before anything else runs:
      makes a remote name resolve to 127.0.0.1 so the browser believes it
      is same-origin. Rebinding cannot forge the Host header, so pinning it
      closes that door.
-  2. Authorization: Bearer <token> (or X-Praxis-Token) must match.
+  2. Authorization: Bearer <token> (or X-MKOS-Token) must match.
 
 The UI page itself is exempt — it is how you obtain the token, and check 1
 is what keeps it from leaking to a rebound origin.
@@ -65,7 +65,7 @@ def presented(headers) -> str | None:
     auth = headers.get("authorization") or ""
     if auth[:7].lower() == "bearer ":
         return auth[7:]
-    return headers.get("x-praxis-token") or (auth or None)
+    return headers.get("x-mkos-token") or (auth or None)
 
 def host_ok(host: str | None) -> bool:
     """Only loopback names. Port is ignored; the socket already pinned it."""

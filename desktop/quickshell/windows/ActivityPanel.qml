@@ -25,7 +25,7 @@ OverlayWindow {
     property var hw: ({})
 
     // ── task manager (click the CPU / RAM / GPU tiles) ──
-    // praxis-top measures *current* CPU (not ps's lifetime average), per-process
+    // mkos-top measures *current* CPU (not ps's lifetime average), per-process
     // GPU use (DRM counters + nvidia-smi, without waking a sleeping dGPU), and
     // stops a task completely: SIGTERM, then SIGKILL for whatever ignores it.
     property string activeView: "events"
@@ -34,7 +34,7 @@ OverlayWindow {
     onActiveViewChanged: { topList = []; topNote = ""; if (activeView !== "events" && !psProc.running) psProc.running = true }
     Process {
         id: psProc
-        command: ["praxis-top", win.activeView === "events" ? "cpu" : win.activeView, "14"]
+        command: ["mkos-top", win.activeView === "events" ? "cpu" : win.activeView, "14"]
         stdout: StdioCollector {
             onStreamFinished: {
                 if (win.activeView === "events") return
@@ -63,7 +63,7 @@ OverlayWindow {
         if (win.armedPid !== p.pid) { win.armedPid = p.pid; disarm.restart(); return }
         win.armedPid = -1
         win.stoppingPid = p.pid
-        stopProc.command = ["praxis-top", "stop", String(p.pid)]
+        stopProc.command = ["mkos-top", "stop", String(p.pid)]
         stopProc.running = true
     }
     Process {
@@ -71,7 +71,7 @@ OverlayWindow {
         stdout: StdioCollector {
             onStreamFinished: {
                 let r = {}
-                try { r = JSON.parse(this.text) } catch (e) { r = { ok: false, msg: "praxis-top is not installed." } }
+                try { r = JSON.parse(this.text) } catch (e) { r = { ok: false, msg: "mkos-top is not installed." } }
                 Notifs.notify(r.ok ? "Task stopped" : "Couldn't stop task", r.msg || "")
             }
         }

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  Publish a built Praxis ISO as a GitHub release.
+#  Publish a built MKOS ISO as a GitHub release.
 #
 #    iso/publish.sh                     newest ISO in the build dir
-#    iso/publish.sh path/to/praxis.iso
+#    iso/publish.sh path/to/mkos.iso
 #
 #  Uses the GitHub CLI (`gh auth login` once). The tag is v<ISO date>.
 #  GitHub caps release assets at 2 GiB; larger ISOs are split into parts
@@ -12,15 +12,15 @@
 set -euo pipefail
 die() { printf '\n\033[1;31m!! %s\033[0m\n' "$*" >&2; exit 1; }
 
-REPO_SLUG=${PRAXIS_GITHUB_REPO:-MrMehulkhanna/praxis}
-BUILD=${PRAXIS_BUILD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/praxis-iso}
-ISO=${1:-$(ls -t "$BUILD"/out/praxis-*.iso 2>/dev/null | head -1 || true)}
+REPO_SLUG=${MKOS_GITHUB_REPO:-MrMehulkhanna/mkos}
+BUILD=${MKOS_BUILD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/mkos-iso}
+ISO=${1:-$(ls -t "$BUILD"/out/mkos-*.iso 2>/dev/null | head -1 || true)}
 [ -n "$ISO" ] && [ -f "$ISO" ] || die "no ISO found — build one with iso/build.sh or pass its path"
 command -v gh >/dev/null || die "GitHub CLI missing: sudo pacman -S github-cli && gh auth login"
 gh auth status >/dev/null 2>&1 || die "not logged in: gh auth login"
 
 NAME=$(basename "$ISO")
-VERSION=$(sed -E 's/^praxis-([0-9.]+)-x86_64\.iso$/\1/' <<<"$NAME")
+VERSION=$(sed -E 's/^mkos-([0-9.]+)-x86_64\.iso$/\1/' <<<"$NAME")
 TAG="v$VERSION"
 DIR=$(dirname "$ISO")
 LIMIT=$((2 * 1024 * 1024 * 1024))
@@ -38,10 +38,10 @@ else
 fi
 
 NOTES=$(cat <<EOF
-Praxis Linux $VERSION — live + installer ISO (x86_64, UEFI).
+MKOS Linux $VERSION — live + installer ISO (x86_64, UEFI).
 
 **Try it:** write the ISO to a USB drive (\`iso/flash.sh\`, Ventoy, or balenaEtcher), boot it with
-Secure Boot disabled, and click **Install Praxis Linux** in the dock. If the target disk has free,
+Secure Boot disabled, and click **Install MKOS Linux** in the dock. If the target disk has free,
 unallocated space, the installer uses only that space and keeps Windows in the boot menu.
 
 **Verify:** \`sha256sum -c $NAME.sha256\`
@@ -49,5 +49,5 @@ $REASSEMBLE
 EOF
 )
 
-gh release create "$TAG" "${ASSETS[@]}" --repo "$REPO_SLUG" --title "Praxis Linux $VERSION" --notes "$NOTES"
+gh release create "$TAG" "${ASSETS[@]}" --repo "$REPO_SLUG" --title "MKOS Linux $VERSION" --notes "$NOTES"
 printf '\n\033[1;32mPublished\033[0m  https://github.com/%s/releases/tag/%s\n' "$REPO_SLUG" "$TAG"

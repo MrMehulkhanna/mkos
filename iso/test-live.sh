@@ -10,7 +10,7 @@
 #  Live checks: desktop up (Hyprland, shell, notifications), network manager,
 #  the installer app and engine, the disk probe as the installer sees it, and
 #  screenshots of the desktop and of the graphical installer (grim inside the
-#  VM, saved next to the logs). With --install the live system installs Praxis
+#  VM, saved next to the logs). With --install the live system installs MKOS
 #  onto a second virtual disk using the same engine and plan format as the
 #  graphical installer, then that disk is booted and checked. Packages come
 #  from the build host's pacman cache first (an HTTP cache server), the
@@ -18,8 +18,8 @@
 # ============================================================================
 set -uo pipefail
 ISO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-W=${PRAXIS_TEST_DIR:-/var/tmp/praxis-live-test}
-OUT=${PRAXIS_TEST_OUT:-$W/out}
+W=${MKOS_TEST_DIR:-/var/tmp/mkos-live-test}
+OUT=${MKOS_TEST_OUT:-$W/out}
 OVMF_CODE=/usr/share/edk2/x64/OVMF_CODE.4m.fd
 OVMF_VARS=/usr/share/edk2/x64/OVMF_VARS.4m.fd
 ISO="" SCEN=""
@@ -32,7 +32,7 @@ done
 [ "$(id -u)" -eq 0 ] || { echo "run with sudo" >&2; exit 2; }
 if [ -z "$ISO" ]; then
     BUILD_OWNER=${SUDO_USER:-$USER}
-    ISO=$(ls -t "$(getent passwd "$BUILD_OWNER" | cut -d: -f6)"/.cache/praxis-iso/out/praxis-*.iso 2>/dev/null | head -n1)
+    ISO=$(ls -t "$(getent passwd "$BUILD_OWNER" | cut -d: -f6)"/.cache/mkos-iso/out/mkos-*.iso 2>/dev/null | head -n1)
 fi
 [ -f "$ISO" ] || { echo "no ISO (build one with iso/build.sh)" >&2; exit 2; }
 
@@ -42,10 +42,10 @@ bad() { echo "  ✗ $*"; FAILS=$((FAILS + 1)); }
 check() { local what=$1; shift; if "$@" >/dev/null 2>&1; then ok "$what"; else bad "$what"; fi; }
 guest() { python3 "$ISO_DIR/test/qga.py" "$W/qga.sock" bash -c "$*"; }
 # run as the live user inside the desktop session
-asuser() { guest "sig=\$(ls /run/user/1000/hypr | head -n1); wl=\$(cd /run/user/1000 && ls wayland-? | head -n1); runuser -u praxis -- env XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=\$wl HYPRLAND_INSTANCE_SIGNATURE=\$sig DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus $*"; }
+asuser() { guest "sig=\$(ls /run/user/1000/hypr | head -n1); wl=\$(cd /run/user/1000 && ls wayland-? | head -n1); runuser -u mkos -- env XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=\$wl HYPRLAND_INSTANCE_SIGNATURE=\$sig DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus $*"; }
 shot() {   # shot NAME [USER] — PNG of the session's screen, taken with grim inside the VM
     # (QEMU's screendump has no surface to read with the GL display)
-    local u=${2:-praxis}
+    local u=${2:-mkos}
     guest "uid=\$(id -u $u); sig=\$(ls /run/user/\$uid/hypr 2>/dev/null | head -n1); wl=\$(cd /run/user/\$uid && ls wayland-? 2>/dev/null | head -n1);
            runuser -u $u -- env XDG_RUNTIME_DIR=/run/user/\$uid WAYLAND_DISPLAY=\$wl HYPRLAND_INSTANCE_SIGNATURE=\$sig grim /tmp/shot.png && base64 -w0 /tmp/shot.png" \
         | base64 -d >"$OUT/$1.png" 2>/dev/null
@@ -75,8 +75,8 @@ if [ -n "$SCEN" ]; then
 fi
 
 # a virtual GPU with OpenGL (virgl), so Hyprland and the shell render as on real
-# hardware; PRAXIS_TEST_2D=1 falls back to a plain framebuffer
-if [ "${PRAXIS_TEST_2D:-0}" = 1 ]; then GPU=(-display none -vga virtio)
+# hardware; MKOS_TEST_2D=1 falls back to a plain framebuffer
+if [ "${MKOS_TEST_2D:-0}" = 1 ]; then GPU=(-display none -vga virtio)
 else GPU=(-display "egl-headless,rendernode=/dev/dri/renderD128" -device virtio-vga-gl); fi
 echo "━━ live ISO: $(basename "$ISO") ━━"
 qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -smp 4 -m 6144 \
@@ -92,23 +92,23 @@ else bad "the ISO did not boot (see $W/live.serial)"; exit 1; fi
 for _ in $(seq 60); do guest 'pgrep -x quickshell' >/dev/null 2>&1 && break; sleep 2; done
 sleep 8
 check "Hyprland is running"               guest 'pgrep -x Hyprland'
-check "the Praxis shell is running"       guest 'pgrep -x quickshell'
+check "the MKOS shell is running"       guest 'pgrep -x quickshell'
 check "notifications (swaync) running"    guest 'pgrep -x swaync'
 check "NetworkManager owns the network"   guest 'systemctl is-active NetworkManager'
-check "live user praxis is logged in"     guest 'loginctl list-users | grep -q praxis'
-check "installer app entry is present"    guest 'test -f /usr/share/applications/praxis-install.desktop && test -x /usr/local/bin/praxis-installer'
-check "install engine is executable"      guest 'test -x /usr/local/bin/praxis-install-engine'
-check "desktop package list is on the ISO" guest 'test "$(wc -l < /usr/local/share/praxis/desktop-packages.txt)" -gt 30'
-check "bundled [praxis] repo is on the ISO" guest 'test -f /opt/praxis-repo/praxis.db.tar.gz'
-check "the probe runs as the installer runs it" guest 'runuser -u praxis -- sudo -n /usr/local/bin/praxis-install-engine --probe | python3 -c "import json,sys; d=json.load(sys.stdin); assert d[\"uefi\"]"'
+check "live user mkos is logged in"     guest 'loginctl list-users | grep -q mkos'
+check "installer app entry is present"    guest 'test -f /usr/share/applications/mkos-install.desktop && test -x /usr/local/bin/mkos-installer'
+check "install engine is executable"      guest 'test -x /usr/local/bin/mkos-install-engine'
+check "desktop package list is on the ISO" guest 'test "$(wc -l < /usr/local/share/mkos/desktop-packages.txt)" -gt 30'
+check "bundled [mkos] repo is on the ISO" guest 'test -f /opt/mkos-repo/mkos.db.tar.gz'
+check "the probe runs as the installer runs it" guest 'runuser -u mkos -- sudo -n /usr/local/bin/mkos-install-engine --probe | python3 -c "import json,sys; d=json.load(sys.stdin); assert d[\"uefi\"]"'
 check "swaync is drawn in software"       guest 'tr "\0" "\n" < /proc/$(pgrep -x swaync)/environ | grep -q GSK_RENDERER=cairo'
 failed=$(guest 'systemctl --failed --no-legend --plain | cut -d" " -f1' | paste -sd' ')
 [ -z "$failed" ] && ok "no failed units in the live session" || bad "failed units: $failed"
 shot live-desktop && ok "screenshot: $OUT/live-desktop.png" || bad "no screenshot of the live desktop"
 
-asuser "setsid -f /usr/local/bin/praxis-installer >/tmp/installer.log 2>&1" >/dev/null 2>&1
+asuser "setsid -f /usr/local/bin/mkos-installer >/tmp/installer.log 2>&1" >/dev/null 2>&1
 sleep 10
-check "the graphical installer window opened" guest 'hyprctl -i 0 clients 2>/dev/null | grep -q "Install Praxis Linux" || runuser -u praxis -- env XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE=$(ls /run/user/1000/hypr | head -n1) hyprctl clients | grep -q "Install Praxis Linux"'
+check "the graphical installer window opened" guest 'hyprctl -i 0 clients 2>/dev/null | grep -q "Install MKOS Linux" || runuser -u mkos -- env XDG_RUNTIME_DIR=/run/user/1000 HYPRLAND_INSTANCE_SIGNATURE=$(ls /run/user/1000/hypr | head -n1) hyprctl clients | grep -q "Install MKOS Linux"'
 shot installer-welcome && ok "screenshot: $OUT/installer-welcome.png" || bad "no screenshot of the installer"
 guest 'cat /tmp/installer.log' | grep -iE 'error|warn' | head -5 | sed 's/^/    installer log: /'
 
@@ -117,15 +117,15 @@ if [ -n "$SCEN" ]; then
     echo "━━ installing from the live system: $SCEN ━━"
     extra=""
     [ "$mode" = alongside ] && extra="SHRINK_PART=/dev/vda3
-PRAXIS_MIB=40960"
+MKOS_MIB=40960"
     plan="DISK=/dev/vda
 MODE=$mode
 FS=$fs
 $extra
-HOSTNAME=praxis-live-test
+HOSTNAME=mkos-live-test
 USERNAME=alex
 FULLNAME=Alex Tester
-PASSWORD_HASH='$(printf praxis-test | openssl passwd -6 -stdin)'
+PASSWORD_HASH='$(printf mkos-test | openssl passwd -6 -stdin)'
 TIMEZONE=Europe/Berlin
 XKB_LAYOUT=de
 LOGIN=lock
@@ -137,7 +137,7 @@ EXTRA_CMDLINE=console=ttyS0,115200"
     t0=$SECONDS
     # started detached: the guest agent serves one connection at a time, so a
     # call that waited for the whole install would block the progress polling
-    guest 'setsid -f bash -c "praxis-install-engine /run/plan > /run/engine.out 2>&1; echo \$? > /run/engine.rc"' >/dev/null
+    guest 'setsid -f bash -c "mkos-install-engine /run/plan > /run/engine.out 2>&1; echo \$? > /run/engine.rc"' >/dev/null
     while sleep 20; do
         last=$(guest 'grep "^@@" /run/engine.out | tail -n1' 2>/dev/null)
         printf '\r    %-70s' "${last:0:70}"
@@ -146,7 +146,7 @@ EXTRA_CMDLINE=console=ttyS0,115200"
     done
     echo
     if [ "$(guest 'tail -n1 /run/engine.out')" = "@@ 100 done" ]; then ok "installed from the live system ($((SECONDS - t0)) s)"
-    else bad "install failed: $(guest 'grep -E "^@@ FAIL|^!!" /run/engine.out | tail -n2')"; guest 'tail -n 30 /var/log/praxis-install.log'; exit 1; fi
+    else bad "install failed: $(guest 'grep -E "^@@ FAIL|^!!" /run/engine.out | tail -n2')"; guest 'tail -n 30 /var/log/mkos-install.log'; exit 1; fi
     check "the plan's keyboard layout reached the user's desktop" true
     guest 'systemctl poweroff' >/dev/null 2>&1
     for _ in $(seq 30); do kill -0 "$QEMU_PID" 2>/dev/null || break; sleep 1; done
@@ -156,9 +156,9 @@ EXTRA_CMDLINE=console=ttyS0,115200"
     cp "$OVMF_VARS" "$W/vars2.fd"
     LOOP=$(losetup -fP --show "$W/target.img"); udevadm settle
     esp=$(lsblk -lnpo NAME,PARTTYPE "$LOOP" | awk 'tolower($2) == "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" { print $1; exit }')
-    mkdir -p /mnt/praxis-live-test && mount "$esp" /mnt/praxis-live-test
-    install -Dm644 /mnt/praxis-live-test/EFI/Praxis/grubx64.efi /mnt/praxis-live-test/EFI/BOOT/BOOTX64.EFI   # stands in for the NVRAM entry
-    umount /mnt/praxis-live-test
+    mkdir -p /mnt/mkos-live-test && mount "$esp" /mnt/mkos-live-test
+    install -Dm644 /mnt/mkos-live-test/EFI/MKOS/grubx64.efi /mnt/mkos-live-test/EFI/BOOT/BOOTX64.EFI   # stands in for the NVRAM entry
+    umount /mnt/mkos-live-test
     for _ in $(seq 40); do losetup -d "$LOOP" 2>/dev/null; losetup "$LOOP" >/dev/null 2>&1 || break; sleep 0.25; done
     rm -f "$W/qga.sock"
     qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -smp 4 -m 4096 \
@@ -171,9 +171,9 @@ EXTRA_CMDLINE=console=ttyS0,115200"
     if python3 "$ISO_DIR/test/qga.py" "$W/qga.sock" --wait 240 >/dev/null; then ok "the installed system boots"
     else bad "the installed system did not boot"; tail -n 30 "$W/installed.serial"; exit 1; fi
     check "user alex exists"                 guest 'id alex'
-    check "the [praxis] repo's packages got installed (mpvpaper)" guest 'pacman -Q mpvpaper'
-    check "the live USB's sudo rule did not come along" guest '! test -e /etc/sudoers.d/praxis-live'
-    check "keyboard layout de for Hyprland"  guest 'grep -q "\"de\"" /home/alex/.config/hypr/praxis-local.lua'
+    check "the [mkos] repo's packages got installed (mpvpaper)" guest 'pacman -Q mpvpaper'
+    check "the live USB's sudo rule did not come along" guest '! test -e /etc/sudoers.d/mkos-live'
+    check "keyboard layout de for Hyprland"  guest 'grep -q "\"de\"" /home/alex/.config/hypr/mkos-local.lua'
     check "desktop config in alex's home"    guest 'test -f /home/alex/.config/quickshell/shell.qml && test -f /home/alex/.config/hypr/hyprland.lua'
     check "wallpapers in alex's home"        guest 'ls /home/alex/.local/share/wallpapers/ | grep -E "(deep-purple|aurora-still)"'
     failed=$(guest 'for i in $(seq 60); do s=$(systemctl is-system-running); case $s in running|degraded) break;; esac; sleep 2; done; systemctl --failed --no-legend --plain | cut -d" " -f1' | paste -sd' ')

@@ -1,5 +1,5 @@
 /**
- * Praxis Linux (AIOS) — Live WebBrowser OS Desktop Simulator
+ * MKOS Linux (AIOS) — Live WebBrowser OS Desktop Simulator
  * Author: Mehul Khanna (MrMehulkhanna)
  * 100% Vanilla JavaScript & CSS3 Hardware-Accelerated Wayland/Quickshell Simulation.
  */
@@ -711,7 +711,7 @@
         { name: '/var/log/aios', icon: '📁', meta: 'Local SQLite Audit Log' }
       ],
       iso: [
-        { name: 'praxis-2026-x86_64.iso', icon: '💿', meta: '2.4 GB • Bootable Hybrid ISO' },
+        { name: 'mkos-2026-x86_64.iso', icon: '💿', meta: '2.4 GB • Bootable Hybrid ISO' },
         { name: 'sha256sums.txt', icon: '🔒', meta: '128 B • Cryptographic Hash' },
         { name: 'grub.cfg', icon: '⚙️', meta: '1.4 KB • EFI GRUB Bootloader' }
       ]
@@ -775,13 +775,13 @@
     // -----------------------------------------------------------------------
     const browserPages = {
       docs: {
-        url: 'https://praxis-os.org/docs',
+        url: 'https://mkos-os.org/docs',
         html: `
           <div class="sim-browser-page">
             <div class="sim-b-hero">
               <div class="sim-b-tag">OFFLINE-FIRST HYBRID LINUX DISTRO</div>
-              <h3>Praxis Linux Knowledge Base</h3>
-              <p>Welcome to the built-in offline documentation running locally inside Praxis OS. Explore architecture guides, AI pipeline specs, and Wayland compositor tuning.</p>
+              <h3>MKOS Linux Knowledge Base</h3>
+              <p>Welcome to the built-in offline documentation running locally inside MKOS. Explore architecture guides, AI pipeline specs, and Wayland compositor tuning.</p>
             </div>
             <div class="sim-b-grid">
               <div class="sim-b-card">
@@ -801,12 +801,12 @@
         `
       },
       github: {
-        url: 'https://github.com/MrMehulkhanna/praxis',
+        url: 'https://github.com/MrMehulkhanna/mkos',
         html: `
           <div class="sim-browser-page">
             <div class="sim-b-hero">
               <div class="sim-b-tag">OPEN SOURCE REPOSITORY</div>
-              <h3>MrMehulkhanna / praxis</h3>
+              <h3>MrMehulkhanna / mkos</h3>
               <p>Next-generation Linux distribution blending local AI copiloting, Quickshell hardware-accelerated frosted glass, and automated hardware management.</p>
             </div>
             <div class="sim-b-grid">
@@ -845,12 +845,12 @@
         `
       },
       iso: {
-        url: 'https://praxis-os.org/download',
+        url: 'https://mkos-os.org/download',
         html: `
           <div class="sim-browser-page">
             <div class="sim-b-hero">
               <div class="sim-b-tag">PRODUCTION RELEASE</div>
-              <h3>Praxis Linux v2026 Bootable Image</h3>
+              <h3>MKOS Linux v2026 Bootable Image</h3>
               <p>Download the official hybrid ISO with CachyOS BORE kernel, NVIDIA CUDA drivers, and Quickshell desktop pre-installed.</p>
             </div>
             <div class="sim-b-grid">
@@ -886,30 +886,30 @@
     const quickCmdBtns = document.querySelectorAll('.sim-quick-cmd');
 
     const terminalResponses = {
-      help: `Available Praxis OS commands:
+      help: `Available MKOS commands:
   • neofetch         — Show system hardware, Wayland compositor, and theme
   • aios status      — Check local LLM daemon, Whisper speech, and sandbox
   • aios chat <msg>  — Query local context engine with zero cloud leakage
-  • praxis-share scan   — Auto-discover screen sharing devices on local Wi-Fi
-  • praxis-share status — Check active screen sharing pipelines and viewers
-  • praxis-touchpad  — Precision touchpad sensitivity and gesture tuning
+  • mkos-share scan   — Auto-discover screen sharing devices on local Wi-Fi
+  • mkos-share status — Check active screen sharing pipelines and viewers
+  • mkos-touchpad  — Precision touchpad sensitivity and gesture tuning
   • sensors          — Read CPU / RTX 4060 GPU thermals and fan curves
   • bt-scan          — Run automated BlueZ D-Bus PIN pairing agent
   • wifi-scan        — Multi-band 30s background Wi-Fi scanner
   • clear            — Reset terminal screen`,
 
-      'praxis-share scan': `[praxis-share] Scanning local Wi-Fi beacon for sharing devices...
+      'mkos-share scan': `[mkos-share] Scanning local Wi-Fi beacon for sharing devices...
   ✔ Found: "mk" @ 10.225.175.147:5920 (Port 5920, Gate TLS-PSK)
   Tip: In Settings > Share screen > RECEIVE, nearby devices appear automatically with a 1-click [Select] button!`,
 
-      'praxis-share status': `[praxis-share] Screen Sharing Pipeline Status:
+      'mkos-share status': `[mkos-share] Screen Sharing Pipeline Status:
   ● Service: Active on port 5920 (AES/TLS-PSK Encrypted)
   ● Wi-Fi Auto-Discovery: Active on UDP 5921 (Beacon broadcast)
   ● Virtual Output: HEADLESS-1 (1920x1080@60Hz, 12Mbps CBR)
   ● Hardware Encoder: H.264 (NVENC / VAAPI)
   ● Latency: 18ms LAN delay (Zero internet / cloud leakage)`,
 
-      'praxis-touchpad': `[praxis-touchpad] Precision Touchpad Engine:
+      'mkos-touchpad': `[mkos-touchpad] Precision Touchpad Engine:
   ● Sensitivity: 0.25 (range: -1.0 to 1.0)
   ● Scroll Factor: 1.00 (calibrated smooth scroll)
   ● Natural Scroll: enabled
@@ -917,9 +917,9 @@
   ● Gestures: 3-finger swipe up (Win+Tab), 3-finger swipe down (Win+D)`,
 
       neofetch: `
-  <span style="color: #bb9af7;">       /\\       </span>   <span style="color: #7dcfff; font-weight: bold;">mk@praxis-omen16</span>
+  <span style="color: #bb9af7;">       /\\       </span>   <span style="color: #7dcfff; font-weight: bold;">mk@mkos-omen16</span>
   <span style="color: #bb9af7;">      /  \\      </span>   -----------------
-  <span style="color: #bb9af7;">     / /\\ \\     </span>   <span style="color: #7aa2f7;">OS:</span> Praxis Linux x86_64 (AIOS v2026)
+  <span style="color: #bb9af7;">     / /\\ \\     </span>   <span style="color: #7aa2f7;">OS:</span> MKOS Linux x86_64 (AIOS v2026)
   <span style="color: #bb9af7;">    / /__\\ \\    </span>   <span style="color: #7aa2f7;">Host:</span> HP Omen Gaming Laptop 16-wd0xxx
   <span style="color: #bb9af7;">   / /____\\ \\   </span>   <span style="color: #7aa2f7;">Kernel:</span> 6.11.5-cachyos-bore
   <span style="color: #7dcfff;">  /_/      \\_\\  </span>   <span style="color: #7aa2f7;">Uptime:</span> 14 days, 3 hours
@@ -942,21 +942,21 @@
   ● Privacy Gateway: DEFAULT-DENY (Zero outbound network telemetry)
   ● Audit Log: SQLite FTS5 store (/var/log/aios/audit.db)`,
 
-      sensors: `[praxis-hwmon] Hardware Sensor Telemetry:
+      sensors: `[mkos-hwmon] Hardware Sensor Telemetry:
   ● CPU Package: 44.0°C (Core Max: 48°C)
   ● RTX 4060 GPU: 41.2°C (VRAM: 45°C, Hotspot: 47°C)
   ● Battery State: Discharging (98%, 4h 12m remaining @ 14.2W)
   ● Fan 1 (CPU): 1320 RPM (Silent Profile)
   ● Fan 2 (GPU): 0 RPM (Passive Idle Curve)`,
 
-      'bt-scan': `[praxis-bt] Automated BlueZ D-Bus Agent scanning (30s cycle)...
+      'bt-scan': `[mkos-bt] Automated BlueZ D-Bus Agent scanning (30s cycle)...
   [DISCOVERY] Device: "Bluetooth Wireless Keyboard"
   [AGENT] BlueZ Agent handling automated PIN/passkey pairing handshake
   [SUCCESS] Device paired, trusted, and mapped to Wayland input seat0.
   Latency: 4.8ms | Battery: 94%`,
 
-      'wifi-scan': `[praxis-net] NetworkManager Multi-Band Wi-Fi Scan (2.4GHz + 5GHz + 6GHz):
-  ✔ "Praxis-Lab-5G"     | Ch 44  | -42 dBm | WPA3-SAE | 1200 Mbps (Connected)
+      'wifi-scan': `[mkos-net] NetworkManager Multi-Band Wi-Fi Scan (2.4GHz + 5GHz + 6GHz):
+  ✔ "MKOS-Lab-5G"     | Ch 44  | -42 dBm | WPA3-SAE | 1200 Mbps (Connected)
   ✔ "Home-Fiber-6E"     | Ch 149 | -64 dBm | WPA3-SAE | 866 Mbps
   ✔ "Office-Guest"      | Ch 6   | -78 dBm | WPA2-PSK | 144 Mbps
   Active Interface: wlan0 (Intel Wi-Fi 6E AX211) — Zero scan freeze.`,
@@ -971,7 +971,7 @@
       // Append user command
       const cmdRow = document.createElement('div');
       cmdRow.className = 'term-line user';
-      cmdRow.innerHTML = `<span class="term-prompt">mk@praxis:~$</span> <span class="term-cmd">${escapeHtml(cmd)}</span>`;
+      cmdRow.innerHTML = `<span class="term-prompt">mk@mkos:~$</span> <span class="term-cmd">${escapeHtml(cmd)}</span>`;
       termOutput.appendChild(cmdRow);
 
       let reply = '';
@@ -984,7 +984,7 @@ Analyzing kernel sysfs and local project context...
       } else if (terminalResponses[cmd.toLowerCase()]) {
         reply = terminalResponses[cmd.toLowerCase()];
       } else {
-        reply = `zsh: command not found: ${escapeHtml(cmd)}. Type 'help' for available Praxis commands.`;
+        reply = `zsh: command not found: ${escapeHtml(cmd)}. Type 'help' for available MKOS commands.`;
       }
 
       if (reply === 'CLEAR_SCREEN') {
@@ -1157,11 +1157,11 @@ Analyzing kernel sysfs and local project context...
     const aiMicBtn = document.getElementById('sim-ai-mic-btn');
 
     const aiKnowledge = {
-      zram: `**ZRAM Memory Guard Architecture:**\nUnlike Windows 11 which swaps cold pages to a high-latency disk paging file (causing 3–15 second UI freezes and high disk queue length), Praxis Linux compresses memory pages in RAM using **zstd compression** at over 4.2 GB/sec.\n- **Pressure Stall Index (PSI):** Monitored every 100ms.\n- **Thrashing:** 0.00% swap thrash even with 100 browser tabs open.\n- **Result:** Constant 120Hz compositor refresh with zero stutter.`,
+      zram: `**ZRAM Memory Guard Architecture:**\nUnlike Windows 11 which swaps cold pages to a high-latency disk paging file (causing 3–15 second UI freezes and high disk queue length), MKOS Linux compresses memory pages in RAM using **zstd compression** at over 4.2 GB/sec.\n- **Pressure Stall Index (PSI):** Monitored every 100ms.\n- **Thrashing:** 0.00% swap thrash even with 100 browser tabs open.\n- **Result:** Constant 120Hz compositor refresh with zero stutter.`,
 
-      bluetooth: `**Automated BlueZ D-Bus Agent:**\nIn Praxis Linux, Bluetooth discovery bypasses the clunky Windows/GNOME PIN confirmation dropdown.\n- **Auto-Pair Handshake:** Matches standard HID keyboard vendor profiles and automatically processes passkey/PIN prompts through BlueZ D-Bus.\n- **Seat Mapping:** Automatically connects to Wayland input seat0 with ultra-low 4.8ms polling latency.`,
+      bluetooth: `**Automated BlueZ D-Bus Agent:**\nIn MKOS Linux, Bluetooth discovery bypasses the clunky Windows/GNOME PIN confirmation dropdown.\n- **Auto-Pair Handshake:** Matches standard HID keyboard vendor profiles and automatically processes passkey/PIN prompts through BlueZ D-Bus.\n- **Seat Mapping:** Automatically connects to Wayland input seat0 with ultra-low 4.8ms polling latency.`,
 
-      dualboot: `**Safe Dual-Boot Alongside Windows:**\nPraxis Linux is designed specifically for everyday laptop users who still need Windows for specific games or software.\n- **Non-Destructive:** Uses \`ntfsresize\` to carve out an unallocated slice (80GB recommended) without touching your Windows partition table.\n- **BitLocker Safe:** Leaves your Windows BitLocker TPM PCR registers intact.\n- **UEFI Dual-Boot:** Configures systemd-boot to detect \`bootmgfw.efi\` so you can switch between Windows 11 and Praxis Linux seamlessly with 1 key.`,
+      dualboot: `**Safe Dual-Boot Alongside Windows:**\nMKOS Linux is designed specifically for everyday laptop users who still need Windows for specific games or software.\n- **Non-Destructive:** Uses \`ntfsresize\` to carve out an unallocated slice (80GB recommended) without touching your Windows partition table.\n- **BitLocker Safe:** Leaves your Windows BitLocker TPM PCR registers intact.\n- **UEFI Dual-Boot:** Configures systemd-boot to detect \`bootmgfw.efi\` so you can switch between Windows 11 and MKOS Linux seamlessly with 1 key.`,
 
       sensors: `**Hardware Sensor Diagnostics:**\n- **CPU:** Intel Core i7-14700HX @ 44.0°C (Fan: 1320 RPM - Silent Profile)\n- **GPU:** NVIDIA GeForce RTX 4060 Mobile @ 41.2°C (Fan: 0 RPM - Passive Idle)\n- **VRAM Offload:** 32/32 layers of Qwen-2.5-Coder allocated in dedicated VRAM.\n- **Battery:** 98% (Discharging @ 14.2W, 4h 12m remaining).`
     };
@@ -1195,14 +1195,14 @@ Analyzing kernel sysfs and local project context...
       } else if (lower.includes('sensor') || lower.includes('thermal') || lower.includes('temp') || lower.includes('fan') || lower.includes('cpu') || lower.includes('gpu')) {
         answer = aiKnowledge.sensors;
       } else {
-        answer = `**Praxis Local Assistant:**\nI evaluated your query: "${cleanQ}" locally using Qwen-2.5-Coder-7B.\n- Kernel: 6.11.5-cachyos-bore with BORE (Burst-Oriented Response Enhancer) scheduling.\n- System Load: 0.12 • Compositor: Hyprland direct scanout @ 120 FPS.\n- Cloud Leakage: **0 Bytes**. All local models, configurations, and user data stay on this machine.`;
+        answer = `**MKOS Local Assistant:**\nI evaluated your query: "${cleanQ}" locally using Qwen-2.5-Coder-7B.\n- Kernel: 6.11.5-cachyos-bore with BORE (Burst-Oriented Response Enhancer) scheduling.\n- System Load: 0.12 • Compositor: Hyprland direct scanout @ 120 FPS.\n- Cloud Leakage: **0 Bytes**. All local models, configurations, and user data stay on this machine.`;
       }
 
       const botMsg = document.createElement('div');
       botMsg.className = 'ai-chat-msg assistant';
       botMsg.innerHTML = `
         <div class="ai-avatar">🧠</div>
-        <div class="ai-bubble"><strong>Praxis Local Intelligence:</strong><p class="ai-stream-text"></p></div>
+        <div class="ai-bubble"><strong>MKOS Local Intelligence:</strong><p class="ai-stream-text"></p></div>
       `;
       if (aiChatLog) {
         aiChatLog.appendChild(botMsg);
@@ -1292,8 +1292,8 @@ Analyzing kernel sysfs and local project context...
           setTimeout(nextStep, 1000);
         } else {
           playUiSound('chime');
-          pLabel.textContent = '✔ Dual-Boot Ready! Windows & Praxis both safely configured.';
-          notifySim('Installation Simulation Complete: Windows files intact, Praxis ready.');
+          pLabel.textContent = '✔ Dual-Boot Ready! Windows & MKOS both safely configured.';
+          notifySim('Installation Simulation Complete: Windows files intact, MKOS ready.');
           if (runBtn) {
             runBtn.disabled = false;
             runBtn.textContent = 'Installation Complete ✔';
@@ -1347,7 +1347,7 @@ Analyzing kernel sysfs and local project context...
             simWrapper.classList.add('highlight-focus');
           }
           playUiSound('chime');
-          notifySim('Praxis Live Desktop active: All software environment is running!');
+          notifySim('MKOS Live Desktop active: All software environment is running!');
           toggleAppWindow('ai');
         }
       });

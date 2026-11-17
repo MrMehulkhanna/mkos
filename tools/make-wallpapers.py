@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """make-wallpapers.py [OUT_DIR] [--size WxH] [--only NAME…]
 
-Renders the Praxis still wallpapers — original, procedural, deterministic
+Renders the MKOS still wallpapers — original, procedural, deterministic
 (fixed seeds), so anyone can regenerate them from this file. numpy + Pillow.
 Film grain is added on purpose: it dithers the gradients so they don't band
 on 8-bit screens. Two of them (oled-black, contours) are mostly true black,

@@ -1,4 +1,4 @@
-# Praxis: act before the kernel's OOM killer (which only moves after minutes of
+# MKOS: act before the kernel's OOM killer (which only moves after minutes of
 # a frozen desktop). At <4 % free RAM and <10 % free swap, stop the process
 # with the highest oom_score; prefer the AI model server and browser tabs,
 # never the compositor, the shell, audio or the session.

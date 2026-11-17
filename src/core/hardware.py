@@ -17,7 +17,7 @@ SYS_PENDING  = "/sys/class/firmware-attributes/asus-armoury/attributes/pending_r
 # asus-wmi ABI: 0 = discrete (the NVIDIA GPU drives the screens), 1 = Optimus/hybrid
 MUX_LABELS   = {"0": "dGPU only", "1": "hybrid (iGPU + dGPU)"}
 # the firmware keeps reporting the active mode until the restart; remember what was asked
-MUX_REQUEST  = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "praxis-gpu-mux-requested")
+MUX_REQUEST  = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "mkos-gpu-mux-requested")
 HW_HELPER    = "/usr/local/libexec/aios-hardware"
 
 def _read(p: str, default: str = "") -> str:

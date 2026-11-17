@@ -5,7 +5,7 @@ import Quickshell.Io
 
 // System updates, with the terminal taken out of the loop.
 //
-// praxis-update used to be launched inside a kitty window, which meant the
+// mkos-update used to be launched inside a kitty window, which meant the
 // one operation most likely to need explaining happened in a place with no
 // affordances: no progress, no way to tell finished from stuck, and a
 // reboot requirement buried in scrollback.
@@ -25,7 +25,7 @@ Singleton {
     property bool   upToDate:        true
     property bool   checking:        false
 
-    readonly property string marker: "/var/lib/praxis/restart-required"
+    readonly property string marker: "/var/lib/mkos/restart-required"
 
     function checkForUpdates() {
         if (!checkProc.running && !root.running) {
@@ -36,7 +36,7 @@ Singleton {
 
     Process {
         id: checkProc
-        command: ["praxis-update", "--check-json"]
+        command: ["mkos-update", "--check-json"]
         stdout: StdioCollector {
             onStreamFinished: {
                 root.checking = false
@@ -56,7 +56,7 @@ Singleton {
     function checkRestart() { if (!restartProbe.running) restartProbe.running = true }
     Process {
         id: restartProbe
-        command: ["bash", "-c", "cat /var/lib/praxis/restart-required 2>/dev/null || true"]
+        command: ["bash", "-c", "cat /var/lib/mkos/restart-required 2>/dev/null || true"]
         stdout: StdioCollector {
             onStreamFinished: {
                 const t = this.text.trim()
@@ -71,24 +71,24 @@ Singleton {
         root.running = true; root.finished = false; root.failed = false
         root.lines = []; root.phase = "starting"
         // Decide once, then run once. The obvious form —
-        //   sudo -n praxis-update || praxis-update
+        //   sudo -n mkos-update || mkos-update
         // can start the updater a second time while the first is still
         // going, and the two then deadlock on pacman's database lock: the
         // window sits on one phase forever with no error anywhere.
         proc.command = ["bash", "-c",
             // Ask whether *this command* may run passwordless — not `true`.
-            // Installed PCs only allow praxis-update and a few tools, so
+            // Installed PCs only allow mkos-update and a few tools, so
             // `sudo -n true` failed there, the update ran without admin
             // rights, and every step that writes to the system did nothing.
-            "if sudo -n -l /usr/local/bin/praxis-update >/dev/null 2>&1; then exec sudo -n /usr/local/bin/praxis-update 2>&1; " +
-            "else exec /usr/local/bin/praxis-update 2>&1; fi"]
+            "if sudo -n -l /usr/local/bin/mkos-update >/dev/null 2>&1; then exec sudo -n /usr/local/bin/mkos-update 2>&1; " +
+            "else exec /usr/local/bin/mkos-update 2>&1; fi"]
         proc.running = true
     }
 
     function restartNow() { Quickshell.execDetached(["systemctl", "reboot"]) }
     function dismissRestart() {
         Quickshell.execDetached(["bash", "-c",
-            "rm -f /var/lib/praxis/restart-required 2>/dev/null || sudo -n /usr/local/bin/praxis-update --dismiss-restart"])
+            "rm -f /var/lib/mkos/restart-required 2>/dev/null || sudo -n /usr/local/bin/mkos-update --dismiss-restart"])
         root.restartNeeded = false
     }
 

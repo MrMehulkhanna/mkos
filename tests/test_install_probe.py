@@ -3,7 +3,7 @@ layout, and partition roles (EFI, Windows, recovery, Linux …)."""
 import importlib.util
 import pathlib
 
-PROBE = pathlib.Path(__file__).resolve().parents[1] / "iso/airootfs/usr/local/lib/praxis/install_probe.py"
+PROBE = pathlib.Path(__file__).resolve().parents[1] / "iso/airootfs/usr/local/lib/mkos/install_probe.py"
 spec = importlib.util.spec_from_file_location("install_probe", PROBE)
 probe = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(probe)

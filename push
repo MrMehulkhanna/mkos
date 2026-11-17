@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Every Praxis commit is authored by you, and only you. Pinning the identity
+# Every MKOS commit is authored by you, and only you. Pinning the identity
 # here (instead of relying on ambient git config) means no tool, agent, or
 # collaborator's name can ever slip onto a commit.
 AUTHOR_NAME="Mehul Khanna"

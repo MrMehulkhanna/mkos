@@ -117,7 +117,7 @@ Singleton {
     }
     function downloadModel(id) {
         const cleanId = id.trim().replace(/^local-/, "")
-        Quickshell.execDetached(["kitty", "--class", "praxis-model-dl", "--title", "Download & Verify Model", "-e", "bash", "-c", `praxis-models download "${cleanId}"; echo; read -p "Press Enter to finish..."`])
+        Quickshell.execDetached(["kitty", "--class", "mkos-model-dl", "--title", "Download & Verify Model", "-e", "bash", "-c", `mkos-models download "${cleanId}"; echo; read -p "Press Enter to finish..."`])
     }
 
     Process {

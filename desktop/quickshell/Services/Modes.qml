@@ -5,7 +5,7 @@ import Quickshell.Io
 import Quickshell.Services.UPower
 import "root:/Config"
 
-// System modes, all through `praxis-mode` (the same tool the keybinds and the
+// System modes, all through `mkos-mode` (the same tool the keybinds and the
 // terminal use): the AI on/off, Game mode and Battery saver. The tool keeps
 // the state, so this only mirrors it.
 Singleton {
@@ -19,7 +19,7 @@ Singleton {
     function refresh() { if (!statusProc.running) statusProc.running = true }
     Process {
         id: statusProc
-        command: ["praxis-mode", "status"]
+        command: ["mkos-mode", "status"]
         stdout: StdioCollector {
             onStreamFinished: {
                 try {
@@ -33,7 +33,7 @@ Singleton {
     property var queue: []
     function run(args) {
         if (cmd.running) { queue = queue.concat([args]); return }
-        cmd.command = ["praxis-mode"].concat(args)
+        cmd.command = ["mkos-mode"].concat(args)
         cmd.running = true
     }
     Process {

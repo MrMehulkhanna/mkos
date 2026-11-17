@@ -162,11 +162,11 @@ PanelWindow {
 
                 IconButton {
                     icon: "minus"; iconSize: 12; padding: 5
-                    // praxis-win, not a bare dispatch: moving the window to
+                    // mkos-win, not a bare dispatch: moving the window to
                     // special:minimized is only half of minimising. If that
                     // workspace happens to be open on the monitor, the window
                     // lands somewhere still visible and the button looks dead.
-                    // praxis-win hides it afterwards.
+                    // mkos-win hides it afterwards.
                     //
                     // The address is passed explicitly because a click here can
                     // move focus before the dispatch lands, and "the active
@@ -174,8 +174,8 @@ PanelWindow {
                     onClicked: {
                         const t = Hyprland.activeToplevel
                         const addr = t && t.lastIpcObject ? (t.lastIpcObject.address || "") : ""
-                        Quickshell.execDetached(addr ? ["praxis-win", "minimize", addr]
-                                                     : ["praxis-win", "minimize"])
+                        Quickshell.execDetached(addr ? ["mkos-win", "minimize", addr]
+                                                     : ["mkos-win", "minimize"])
                     }
                 }
                 IconButton {
@@ -222,7 +222,7 @@ PanelWindow {
                 acceptedButtons: Qt.LeftButton | Qt.RightButton
                 onClicked: mouse => {
                     if (mouse.button === Qt.RightButton) {
-                        Quickshell.execDetached(["praxis-time", "auto"])
+                        Quickshell.execDetached(["mkos-time", "auto"])
                     } else {
                         Notifs.togglePanel()
                     }

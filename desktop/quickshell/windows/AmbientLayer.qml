@@ -26,7 +26,7 @@ PanelWindow {
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.layer: WlrLayer.Bottom          // above the wallpaper, below windows
-    WlrLayershell.namespace: "praxis-ambient"
+    WlrLayershell.namespace: "mkos-ambient"
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
     mask: Region {}                                // fully click-through
 

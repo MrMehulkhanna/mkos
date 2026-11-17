@@ -27,7 +27,7 @@ OverlayWindow {
         MouseArea { anchors.fill: parent; onClicked: picker.shown = false }
 
         // staged attachments (paths): images go to a vision model, other
-        // files are read into the prompt by praxis-chat-image text
+        // files are read into the prompt by mkos-chat-image text
         property var attachments: []
         readonly property var stagedImages: attachments.filter(p => isImage(p))
         readonly property var stagedFiles: attachments.filter(p => !isImage(p))
@@ -62,7 +62,7 @@ OverlayWindow {
         // attachments; anything else is pasted as text
         Process {
             id: pasteProc
-            command: ["praxis-chat-image", "paste"]
+            command: ["mkos-chat-image", "paste"]
             stdout: StdioCollector { id: pasteOut }
             onExited: code => { if (code === 0) card.addPaths(pasteOut.text); else input.paste() }
         }
@@ -108,7 +108,7 @@ OverlayWindow {
                 }
                 Column {
                     anchors.verticalCenter: parent.verticalCenter
-                    Text { text: "Praxis"; color: Theme.text; font.family: Theme.font; font.pixelSize: Theme.fontLg; font.weight: Font.Bold }
+                    Text { text: "MKOS"; color: Theme.text; font.family: Theme.font; font.pixelSize: Theme.fontLg; font.weight: Font.Bold }
                     Text {
                         text: !Aios.online ? (Modes.aiOn ? "backend offline" : Modes.game ? "off for Game mode" : "AI is off") : Aios.streaming ? "thinking…" : Aios.loadedModel ? "ready · model loaded" : "ready · loads on first message"
                         color: Theme.muted; font.family: Theme.font; font.pixelSize: Theme.fontXs
@@ -149,7 +149,7 @@ OverlayWindow {
                     }
                     Timer { id: disarm; interval: 3000; onTriggered: forgetBtn.armed = false }
                 }
-                // Open the full Praxis web UI served by the AIOS backend
+                // Open the full MKOS web UI served by the AIOS backend
                 IconButton { icon: "monitor"; iconSize: 14; anchors.verticalCenter: parent.verticalCenter; onClicked: { Quickshell.execDetached(["xdg-open", Aios.base + "/"]); Shell.closeAll(); } }
                 IconButton { icon: "plus"; iconSize: 14; anchors.verticalCenter: parent.verticalCenter; onClicked: { Aios.clearChat(); picker.shown = false } }
                 IconButton { icon: "x"; iconSize: 14; onClicked: Shell.closeAll(); anchors.verticalCenter: parent.verticalCenter }
@@ -438,13 +438,13 @@ OverlayWindow {
                 id: attachBtn
                 anchors { left: inIcon.right; leftMargin: 4; bottom: parent.bottom; bottomMargin: 10 }
                 icon: "paperclip"; iconSize: 14; implicitWidth: 26; implicitHeight: 26; radius: 13
-                onClicked: card.runHelper(["praxis-chat-image", "pick"])
+                onClicked: card.runHelper(["mkos-chat-image", "pick"])
             }
             IconButton {
                 id: shotBtn
                 anchors { left: attachBtn.right; leftMargin: 2; bottom: parent.bottom; bottomMargin: 10 }
                 icon: "camera"; iconSize: 14; implicitWidth: 26; implicitHeight: 26; radius: 13
-                onClicked: card.runHelper(["praxis-chat-image", "shot"])
+                onClicked: card.runHelper(["mkos-chat-image", "shot"])
             }
             Flickable {
                 id: inputFlick
@@ -478,7 +478,7 @@ OverlayWindow {
                         } else if (card.stagedFiles.length) {
                             card.pendingText = t
                             card.reading = true
-                            readProc.command = ["praxis-chat-image", "text"].concat(card.stagedFiles)
+                            readProc.command = ["mkos-chat-image", "text"].concat(card.stagedFiles)
                             readProc.running = true
                         } else {
                             Aios.send(t, card.stagedImages)

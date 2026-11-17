@@ -1,5 +1,5 @@
 /**
- * Praxis Linux (AIOS) — Main Client Script
+ * MKOS Linux (AIOS) — Main Client Script
  * Handles Interactive Terminal, 3D Camera Controls, Architecture Tabs,
  * Wallpaper Lightbox, Shortcuts Search Filter, Copy to Clipboard, and Mobile Navigation.
  */
@@ -13,29 +13,29 @@
   const terminalCommands = {
     diagnostics: {
       cmd: 'ai "why is my laptop hot?"',
-      output: `[praxis-agent] Gathering real-time system telemetry...
+      output: `[mkos-agent] Gathering real-time system telemetry...
 ● CPU: Intel Core i7-14700HX (20 threads) @ 4.6GHz — 68°C
 ● GPU: NVIDIA GeForce RTX 4060 Max-Q (60W) — 54°C (Normal)
 ● Memory: 3.4 GB / 32 GB used (ZRAM zstd compression: 0.1% thrash)
 ● Process analysis:
     PID 4821 [blender] consuming 480% CPU (rendering frame 42)
-    PID 1120 [praxis-daemon] idle @ 0.2% CPU
+    PID 1120 [mkos-daemon] idle @ 0.2% CPU
 ✔ Diagnosis:
   Your laptop is running Blender in the background. The thermal system is performing normally within safety margins.
-  Recommendation: Run 'praxis mode game on' to prioritize render threads, or tap Super+G.`
+  Recommendation: Run 'mkos mode game on' to prioritize render threads, or tap Super+G.`
     },
     voice: {
       cmd: 'Super+H [Hold & Speak] -> "Add a retry decorator with exponential backoff to fetch_data"',
-      output: `[praxis-dictate] Local Whisper Small (English) — Zero cloud latency
+      output: `[mkos-dictate] Local Whisper Small (English) — Zero cloud latency
 Transcribed in 142ms:
 "Add a retry decorator with exponential backoff to fetch_data"
 ✔ Streamed directly into active NeoVim buffer at cursor (line 84).
 No data left your hardware.`
     },
     doctor: {
-      cmd: 'praxis doctor --fix',
-      output: `[praxis-doctor] Running comprehensive hardware & kernel audit...
-✔ [OK] UEFI Bootloader: Praxis priority confirmed in NVRAM
+      cmd: 'mkos doctor --fix',
+      output: `[mkos-doctor] Running comprehensive hardware & kernel audit...
+✔ [OK] UEFI Bootloader: MKOS priority confirmed in NVRAM
 ✔ [OK] HP/Acer Fallback Loader: Verified at /boot/EFI/BOOT/BOOTX64.EFI
 ✔ [OK] Backlight Engine: nvidia_wmi_ec_backlight active (PWM clamped > 3%)
 ✔ [OK] Bluetooth Agent: org.bluez.Agent1 registered with PIN prompt helper
@@ -45,7 +45,7 @@ All 18 system subsystems healthy. Zero errors.`
     },
     rag: {
       cmd: 'ai rag add ~/research && ai rag q "What was our quarterly GPU memory budget?"',
-      output: `[praxis-rag] Embedding 42 PDF & Markdown documents using local MiniLM...
+      output: `[mkos-rag] Embedding 42 PDF & Markdown documents using local MiniLM...
 Indexed in 1.4s (FTS5 + Vector hybrid store in local SQLite).
 Query: "What was our quarterly GPU memory budget?"
 ✔ Answer:
@@ -88,12 +88,12 @@ Sources:
       btn.classList.add('active');
       const view = btn.getAttribute('data-view');
       if (view === 'spin') {
-        if (typeof window.togglePraxisAutoSpin === 'function') {
-          const isSpinning = window.togglePraxisAutoSpin();
+        if (typeof window.toggleMKOSAutoSpin === 'function') {
+          const isSpinning = window.toggleMKOSAutoSpin();
           btn.innerHTML = isSpinning ? '<span>Spinning ⚡</span>' : '<span>Auto-Spin</span>';
         }
-      } else if (typeof window.setPraxis3DView === 'function') {
-        window.setPraxis3DView(view);
+      } else if (typeof window.setMKOS3DView === 'function') {
+        window.setMKOS3DView(view);
       }
     });
   });

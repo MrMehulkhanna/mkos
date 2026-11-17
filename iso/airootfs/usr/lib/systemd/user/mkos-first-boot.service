@@ -1,0 +1,12 @@
+[Unit]
+Description=MKOS welcome notification (and installer prompt on live media)
+After=graphical-session.target
+PartOf=graphical-session.target
+ConditionPathExists=!%h/.mkos-first-boot-done
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mkos-first-boot
+
+[Install]
+WantedBy=graphical-session.target

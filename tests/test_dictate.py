@@ -6,13 +6,13 @@ import pathlib
 
 import pytest
 
-SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "iso/airootfs/usr/local/bin/praxis-dictate"
+SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "iso/airootfs/usr/local/bin/mkos-dictate"
 
 
 @pytest.fixture(scope="module")
 def pd():
-    loader = importlib.machinery.SourceFileLoader("praxis_dictate", str(SCRIPT))
-    spec = importlib.util.spec_from_loader("praxis_dictate", loader)
+    loader = importlib.machinery.SourceFileLoader("mkos_dictate", str(SCRIPT))
+    spec = importlib.util.spec_from_loader("mkos_dictate", loader)
     mod = importlib.util.module_from_spec(spec)
     loader.exec_module(mod)
     return mod

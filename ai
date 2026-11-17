@@ -26,20 +26,20 @@ BASE = "http://127.0.0.1:8778"
 # The API requires a token (see ~/aios/src/core/auth.py). It lives in a
 # 0600 file that only this user can read, so reading it is the whole
 # handshake — no prompt, no config.
-def _praxis_token() -> str:
+def _mkos_token() -> str:
     import os as _o, pathlib as _p
     t = _o.environ.get("AIOS_TOKEN", "").strip()
     if t:
         return t
     for f in (_p.Path(_o.environ.get("AIOS_HOME", _p.Path.home() / "aios")) / "config" / "aios.token",
-              _p.Path("/etc/praxis/aios.token")):
+              _p.Path("/etc/mkos/aios.token")):
         try:
             return f.read_text().strip()
         except OSError:
             pass
     return ""
 
-_AUTH = {"Authorization": "Bearer " + _praxis_token()}
+_AUTH = {"Authorization": "Bearer " + _mkos_token()}
 
 HOME = pathlib.Path(os.environ.get("AIOS_HOME", pathlib.Path.home() / "aios"))
 D, B, R, G, Y, C, M, RST = "\033[2m", "\033[1m", "\033[31m", "\033[32m", "\033[33m", "\033[36m", "\033[35m", "\033[0m"
@@ -290,11 +290,11 @@ def cmd_doctor():
     if nvidia:
         add("nvidia-smi sees the GPU", subprocess.run(["nvidia-smi", "-L"], capture_output=True).returncode == 0, "check the nvidia driver / modules")
     models = sorted(p.parent.name for p in (HOME / "models").glob("*/*.gguf") if "mmproj" not in p.name.lower() and p.stat().st_size > 100_000_000)
-    add(f"local models: {', '.join(dict.fromkeys(models)) or 'none'}", bool(models), "praxis-models recommend, then praxis-models download <id>")
+    add(f"local models: {', '.join(dict.fromkeys(models)) or 'none'}", bool(models), "mkos-models recommend, then mkos-models download <id>")
     add("python venv", (HOME / ".venv/bin/python").exists())
     for mod in ("fastapi", "httpx", "faster_whisper", "sqlite_vec"):
         add(f"venv has {mod}", subprocess.run([str(HOME / ".venv/bin/python"), "-c", f"import {mod}"], capture_output=True).returncode == 0, f"{HOME}/.venv/bin/pip install {mod.replace('_', '-')}")
-    add("quickshell running", subprocess.run(["pgrep", "-x", "quickshell"], capture_output=True).returncode == 0, "praxis-restart-shell  (Super+Esc)")
+    add("quickshell running", subprocess.run(["pgrep", "-x", "quickshell"], capture_output=True).returncode == 0, "mkos-restart-shell  (Super+Esc)")
     add("swaync running", subprocess.run(["pgrep", "-x", "swaync"], capture_output=True).returncode == 0, "swaync &")
     add("polkit agent (for root-only hardware toggles)", subprocess.run(["pgrep", "-f", "polkit-kde-authentication-agent"], capture_output=True).returncode == 0, "/usr/lib/polkit-kde-authentication-agent-1 &")
     add("pw-record (voice)", bool(shutil.which("pw-record")), "pacman -S pipewire")

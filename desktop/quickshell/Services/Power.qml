@@ -39,7 +39,7 @@ Singleton {
             // String(): Process.command is a list of strings, and a bare
             // number is not one. Everywhere else in the shell that passes a
             // number does String(...) — this was the one place that did not.
-            brtSet.command = ["env", "PRAXIS_QUIET=1", "praxis-brightness", "set", String(Math.round(v * 100))]
+            brtSet.command = ["env", "MKOS_QUIET=1", "mkos-brightness", "set", String(Math.round(v * 100))]
             brtSet.running = true
         } else _pendingBrt = v
     }
@@ -49,16 +49,16 @@ Singleton {
         // A brightness set that fails should say so. Silently swallowing it
         // is how a dead slider looked like a mystery instead of a bug.
         stderr: StdioCollector {
-            onStreamFinished: if (this.text.trim()) console.warn("praxis-brightness:", this.text.trim())
+            onStreamFinished: if (this.text.trim()) console.warn("mkos-brightness:", this.text.trim())
         }
         onExited: code => {
-            if (code !== 0) console.warn("praxis-brightness set failed, exit", code)
+            if (code !== 0) console.warn("mkos-brightness set failed, exit", code)
             if (root._pendingBrt >= 0) { const v = root._pendingBrt; root._pendingBrt = -1; root.setBrightness(v) }
         }
     }
     Process {
         id: brtProc
-        command: ["bash", "-c", "praxis-brightness get | tr -d %"]
+        command: ["bash", "-c", "mkos-brightness get | tr -d %"]
         stdout: StdioCollector { onStreamFinished: { const v = parseInt(this.text.trim()); if (!isNaN(v)) root.brightness = v / 100 } }
     }
     Component.onDestruction: {}

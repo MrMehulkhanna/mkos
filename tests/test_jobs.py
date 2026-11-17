@@ -1,4 +1,4 @@
-"""praxis-jobs: profile/link parsing, the practice form and its safety checks
+"""mkos-jobs: profile/link parsing, the practice form and its safety checks
 (no browser, no model)."""
 import importlib
 import json
@@ -6,12 +6,12 @@ import pathlib
 import sys
 import urllib.request
 
-LIB = pathlib.Path(__file__).resolve().parents[1] / "iso/airootfs/usr/local/lib/praxis"
+LIB = pathlib.Path(__file__).resolve().parents[1] / "iso/airootfs/usr/local/lib/mkos"
 sys.path.insert(0, str(LIB))
 
 
 def agent(tmp_path, monkeypatch):
-    monkeypatch.setenv("PRAXIS_JOBS_DIR", str(tmp_path))
+    monkeypatch.setenv("MKOS_JOBS_DIR", str(tmp_path))
     import jobs_agent
     return importlib.reload(jobs_agent)
 

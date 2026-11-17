@@ -62,8 +62,8 @@ def test_reingesting_unchanged_file_is_skipped(tmp_path):
 
 def test_paths_with_quotes_and_underscores_are_stored_safely(tmp_path):
     # `_` is a LIKE wildcard and `"` breaks hand-built JSON; both must be exact.
-    lookalike = _write(tmp_path, 'myX"quoted"Xnotes.md', "hyprland quickshell praxis")
-    weird = _write(tmp_path, 'my_"quoted"_notes.md', "hyprland quickshell praxis")
+    lookalike = _write(tmp_path, 'myX"quoted"Xnotes.md', "hyprland quickshell mkos")
+    weird = _write(tmp_path, 'my_"quoted"_notes.md', "hyprland quickshell mkos")
     assert rag.ingest_path(lookalike, embed=False)["files"] == 1
     # Same content, different path: must NOT be treated as already indexed.
     # (A LIKE pattern built from this path would let each `_` match the `X`.)
@@ -78,13 +78,13 @@ def test_query_on_empty_store_returns_nothing():
 # ── forget ──────────────────────────────────────────────────────────────────
 
 def _fts_rows():
-    return db.conn().execute("SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH 'praxis'").fetchone()[0]
+    return db.conn().execute("SELECT COUNT(*) FROM chunks_fts WHERE chunks_fts MATCH 'mkos'").fetchone()[0]
 
 
 def test_forget_conversations_keeps_documents(tmp_path):
-    _write(tmp_path, "doc.md", "praxis documentation that must survive")
+    _write(tmp_path, "doc.md", "mkos documentation that must survive")
     rag.ingest_path(tmp_path, embed=False)
-    db.add_object("message", "praxis chat message to forget", conversation_id="c1", role="user")
+    db.add_object("message", "mkos chat message to forget", conversation_id="c1", role="user")
 
     result = db.forget("conversations")
 
@@ -95,9 +95,9 @@ def test_forget_conversations_keeps_documents(tmp_path):
 
 
 def test_forget_all_leaves_no_dangling_index_rows(tmp_path):
-    _write(tmp_path, "doc.md", "praxis one")
+    _write(tmp_path, "doc.md", "mkos one")
     rag.ingest_path(tmp_path, embed=False)
-    db.add_object("message", "praxis two", conversation_id="c1", role="user")
+    db.add_object("message", "mkos two", conversation_id="c1", role="user")
 
     db.forget("all")
 
@@ -105,7 +105,7 @@ def test_forget_all_leaves_no_dangling_index_rows(tmp_path):
     assert c.execute("SELECT COUNT(*) FROM objects").fetchone()[0] == 0
     assert c.execute("SELECT COUNT(*) FROM chunks").fetchone()[0] == 0
     assert _fts_rows() == 0
-    assert rag.query("praxis") == []
+    assert rag.query("mkos") == []
 
 
 def test_forget_keeps_settings_and_ledger():

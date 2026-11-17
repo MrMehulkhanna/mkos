@@ -28,7 +28,7 @@ def ran(monkeypatch, tmp_path):
     ("Turn the volume up.", "volume_up"),
     ("Please turn up the volume", "volume_up"),
     ("louder", "volume_up"),
-    ("Hey Praxis, lower the volume.", "volume_down"),
+    ("Hey MKOS, lower the volume.", "volume_down"),
     ("Mute the sound.", "mute_toggle"),
     ("Set brightness to 50%.", "brightness_set"),
     ("Switch to workspace 3.", "workspace_switch"),
@@ -64,5 +64,5 @@ def test_unlisted_apps_do_not_launch(ran):
 
 
 def test_normalize_strips_only_courtesy():
-    assert security.normalize("Hey Praxis, could you mute please?") == "mute"
+    assert security.normalize("Hey MKOS, could you mute please?") == "mute"
     assert security.normalize("Delete my files now") == "delete files"   # the verb survives

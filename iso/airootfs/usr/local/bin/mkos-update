@@ -1,0 +1,868 @@
+#!/usr/bin/env bash
+
+# ── run with the rights it needs ────────────────────────────────────────
+# Started without root — by an older update window, or by hand — it used to
+# carry on anyway, and every step that writes to the system quietly failed.
+# If sudo allows this command without a password, take it.
+if [ "$(id -u)" -ne 0 ] && sudo -n -l "$(readlink -f "$0")" >/dev/null 2>&1; then
+    exec sudo -n "$(readlink -f "$0")" "$@"
+fi
+if [ "${1:-}" = "--dismiss-restart" ]; then
+    rm -f /var/lib/mkos/restart-required; exit 0
+fi
+# ============================================================================
+#  MKOS rolling updater — refresh system packages + AIOS + shell config.
+#  Safe to run any time. No-op if nothing to do.
+#
+#  Flags:
+#    --check   Show what would be updated without touching the system.
+# ============================================================================
+set -uo pipefail
+
+log() { echo -e "\n\033[1;36m==> $*\033[0m"; }
+
+# ── restart signalling ──────────────────────────────────────────────────
+# A GUI cannot guess whether an update needs a reboot by reading log text,
+# so leave a machine-readable marker. Only the things that genuinely cannot
+# be reloaded in place count: a new kernel is not the running one, and
+# systemd and the graphics driver both need the session restarted.
+RESTART_MARKER=/var/lib/mkos/restart-required
+pkgver() { pacman -Q "$1" 2>/dev/null | awk '{print $2}'; }
+restart_snapshot() {
+    printf '%s|%s|%s|%s\n' "$(uname -r)" "$(pkgver linux)" "$(pkgver systemd)" "$(pkgver nvidia-utils)"
+}
+mark_restart_if_needed() {   # before after
+    [ "$1" = "$2" ] && return 0
+    local reasons=""
+    IFS='|' read -r _ l0 s0 n0 <<<"$1"
+    IFS='|' read -r _ l1 s1 n1 <<<"$2"
+    [ "$l0" != "$l1" ] && reasons="$reasons kernel"
+    [ "$s0" != "$s1" ] && reasons="$reasons systemd"
+    [ "$n0" != "$n1" ] && reasons="$reasons graphics-driver"
+    [ -n "$reasons" ] || return 0
+    install -d -m755 "$(dirname "$RESTART_MARKER")" 2>/dev/null || \
+        sudo install -d -m755 "$(dirname "$RESTART_MARKER")" 2>/dev/null || return 0
+    printf '%s\n' "${reasons# }" >"$RESTART_MARKER" 2>/dev/null || \
+        printf '%s\n' "${reasons# }" | sudo tee "$RESTART_MARKER" >/dev/null 2>&1 || true
+}
+success() { echo -e "\033[1;32m  ✓ $*\033[0m"; }
+info() { echo -e "\033[1;34m  → $*\033[0m"; }
+warn() { echo -e "\033[1;33m  ! $*\033[0m"; }
+# ── one at a time ───────────────────────────────────────────────────────
+# Two updates running together deadlock on pacman's database lock and sit
+# there with no error, which from a GUI looks exactly like a hung update.
+# Refuse the second one plainly instead.
+#
+# The lock lives in /run when running as root, never in /tmp: a lock left in
+# /tmp by an earlier non-root run belongs to that user, and with the kernel's
+# fs.protected_regular root may not open it there. Every later update then
+# failed to get the lock and said "already running" while nothing was — that
+# is why updates downloaded on some PCs but never installed. And a lock we
+# cannot open is not proof another update holds it, so only a real held
+# lock stops us.
+if [ "$EUID" -eq 0 ]; then
+    MKOS_UPDATE_LOCK=/run/mkos-update.lock
+else
+    MKOS_UPDATE_LOCK="${XDG_RUNTIME_DIR:-/tmp}/mkos-update.lock"
+fi
+if exec 9>"$MKOS_UPDATE_LOCK" 2>/dev/null \
+   && command -v flock >/dev/null 2>&1 && ! flock -n 9; then
+    echo -e "\033[1;33m  An update is already running. Wait for it to finish.\033[0m" >&2
+    exit 7
+fi
+
+RESTART_BEFORE="$(restart_snapshot)"
+
+notify() { command -v notify-send >/dev/null && notify-send -a "MKOS" -t 3500 "MKOS Update" "$1" 2>/dev/null || true; }
+
+# Safe copy function: uses rsync if available, falls back to cp -a (coreutils)
+copy_tree() {
+    local src="$1" dst="$2"
+    mkdir -p "$dst"
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a "$src/" "$dst/"
+    else
+        cp -a "$src/." "$dst/"
+    fi
+}
+
+copy_tree_sudo() {
+    local src="$1" dst="$2"
+    if [ "$EUID" -eq 0 ]; then
+        copy_tree "$src" "$dst"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo mkdir -p "$dst"
+        if command -v rsync >/dev/null 2>&1; then
+            sudo rsync -a "$src/" "$dst/"
+        else
+            sudo cp -a "$src/." "$dst/"
+        fi
+    fi
+}
+
+find_repo() {
+    if [ -d "$HOME/aios/.git" ]; then echo "$HOME/aios"
+    elif [ -n "${SUDO_USER:-}" ] && [ -d "/home/$SUDO_USER/aios/.git" ]; then echo "/home/$SUDO_USER/aios"
+    elif [ -d "/opt/aios/.git" ]; then echo "/opt/aios"
+    else
+        for c in /home/*/aios; do [ -d "$c/.git" ] && echo "$c" && return 0; done
+    fi
+}
+
+if [ "${1:-}" = "--check-json" ]; then
+    r=$(find_repo)
+    python3 -c "
+import json, subprocess, os, sys
+repo = sys.argv[1]
+cur_hash = ''
+latest_hash = ''
+incoming = []
+pacman_count = 0
+if repo and os.path.isdir(os.path.join(repo, '.git')):
+    try:
+        cur_hash = subprocess.check_output(['git', '-C', repo, 'rev-parse', '--short', 'HEAD'], stderr=subprocess.DEVNULL, text=True).strip()
+        subprocess.run(['git', '-C', repo, 'fetch', '--quiet', 'origin', 'main'], stderr=subprocess.DEVNULL, timeout=5)
+        latest_hash = subprocess.check_output(['git', '-C', repo, 'rev-parse', '--short', 'origin/main'], stderr=subprocess.DEVNULL, text=True).strip()
+        out = subprocess.check_output(['git', '-C', repo, 'log', 'HEAD..origin/main', '--pretty=format:%h %s'], stderr=subprocess.DEVNULL, text=True).strip()
+        if out:
+            incoming = [l.strip() for l in out.split('\n') if l.strip()]
+    except Exception:
+        pass
+try:
+    pout = subprocess.check_output(['checkupdates'], stderr=subprocess.DEVNULL, text=True).strip()
+    if pout:
+        pacman_count = len([l for l in pout.split('\n') if l.strip()])
+except Exception:
+    pass
+up_to_date = (len(incoming) == 0 and (cur_hash == latest_hash or not latest_hash))
+print(json.dumps({
+    'current': cur_hash,
+    'latest': latest_hash or cur_hash,
+    'incoming': incoming,
+    'upToDate': up_to_date,
+    'pacman_count': pacman_count
+}))
+" "${r:-}"
+    exit 0
+fi
+
+if [ "${1:-}" = "--check" ] || [ "${1:-}" = "-n" ]; then
+    log "Checking for updates..."
+    if command -v checkupdates >/dev/null 2>&1; then
+        c=$(checkupdates 2>/dev/null | wc -l)
+        echo "  Pacman: $c packages have newer versions"
+    fi
+    r=$(find_repo)
+    if [ -n "$r" ] && [ -d "$r/.git" ]; then
+        ( cd "$r" && git fetch --quiet origin main 2>/dev/null || true; \
+          cur=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown"); \
+          latest=$(git rev-parse --short origin/main 2>/dev/null || echo "$cur"); \
+          inc=$(git log 'HEAD..origin/main' --pretty=format:'  • %h %s' 2>/dev/null || true); \
+          if [ -n "$inc" ]; then
+              echo "  Repository: $cur -> $latest"
+              echo "$inc"
+          else
+              echo "  Repository: up to date at $cur"
+          fi )
+    fi
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# 0. Sudoers passwordless configuration & system hygiene
+# ---------------------------------------------------------------------------
+# Clean obsolete DisableDownloadTimeout if present in /etc/pacman.conf
+if [ -f /etc/pacman.conf ] && grep -q "DisableDownloadTimeout" /etc/pacman.conf; then
+    info "Removing obsolete DisableDownloadTimeout from /etc/pacman.conf..."
+    if [ "$EUID" -eq 0 ]; then
+        sed -i '/DisableDownloadTimeout/d' /etc/pacman.conf
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo sed -i '/DisableDownloadTimeout/d' /etc/pacman.conf
+    fi
+fi
+if [ "$EUID" -eq 0 ]; then
+    cat << 'EOF' > /etc/sudoers.d/mkos-nopasswd
+# Allow passwordless execution of MKOS system updates and time synchronization
+%wheel ALL=(ALL:ALL) NOPASSWD: /usr/local/bin/mkos-update, /usr/bin/mkos-update, /usr/local/bin/mkos-time, /usr/bin/timedatectl, /usr/bin/hwclock, /usr/local/bin/mkos-restart-shell
+EOF
+    chmod 0440 /etc/sudoers.d/mkos-nopasswd
+elif command -v sudo >/dev/null 2>&1; then
+    sudo bash -c 'cat << "EOF" > /etc/sudoers.d/mkos-nopasswd
+# Allow passwordless execution of MKOS system updates and time synchronization
+%wheel ALL=(ALL:ALL) NOPASSWD: /usr/local/bin/mkos-update, /usr/bin/mkos-update, /usr/local/bin/mkos-time, /usr/bin/timedatectl, /usr/bin/hwclock, /usr/local/bin/mkos-restart-shell
+EOF
+chmod 0440 /etc/sudoers.d/mkos-nopasswd' 2>/dev/null || true
+fi
+
+# Ensure rsync is installed
+if ! command -v rsync >/dev/null 2>&1 && command -v pacman >/dev/null 2>&1; then
+    info "Installing rsync utility for faster incremental updates..."
+    if [ "$EUID" -eq 0 ]; then
+        pacman -S --needed --noconfirm rsync >/dev/null 2>&1 || true
+    else
+        sudo pacman -S --needed --noconfirm rsync >/dev/null 2>&1 || true
+    fi
+fi
+
+# Screen brightness needs brightnessctl (older installs may lack it)
+if ! command -v brightnessctl >/dev/null 2>&1 && command -v pacman >/dev/null 2>&1; then
+    info "Installing brightnessctl for the brightness keys and slider..."
+    if [ "$EUID" -eq 0 ]; then
+        pacman -S --needed --noconfirm brightnessctl >/dev/null 2>&1 || true
+    else
+        sudo pacman -S --needed --noconfirm brightnessctl >/dev/null 2>&1 || true
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 1. System packages (pacman -Syu)
+# ---------------------------------------------------------------------------
+log "System packages (pacman -Syu)"
+if [ "$EUID" -eq 0 ]; then
+    pacman -Syu --noconfirm || warn "Pacman update finished with warnings"
+else
+    sudo pacman -Syu --noconfirm || warn "Pacman update finished with warnings"
+fi
+
+# ---------------------------------------------------------------------------
+# 2. AUR (yay) if present
+# ---------------------------------------------------------------------------
+if command -v yay >/dev/null 2>&1 && [ "$EUID" -ne 0 ]; then
+    log "AUR packages (yay)"
+    yay -Syu --noconfirm --aur 2>&1 | tail -10 || true
+fi
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# 3. GitHub repository sync
+# ---------------------------------------------------------------------------
+log "Pulling latest features & fixes from GitHub"
+REPO_URL="https://github.com/MrMehulkhanna/mkos.git"
+
+SRC_REPO=""
+if [ -d "$HOME/aios/.git" ]; then
+    SRC_REPO="$HOME/aios"
+elif [ -n "${SUDO_USER:-}" ] && [ -d "/home/$SUDO_USER/aios/.git" ]; then
+    SRC_REPO="/home/$SUDO_USER/aios"
+elif [ -d "/opt/aios/.git" ]; then
+    SRC_REPO="/opt/aios"
+else
+    for candidate in /home/*/aios; do
+        if [ -d "$candidate/.git" ]; then
+            SRC_REPO="$candidate"
+            break
+        fi
+    done
+fi
+
+[ -z "$SRC_REPO" ] && SRC_REPO="$HOME/aios"
+info "Synchronizing repository in $SRC_REPO..."
+mkdir -p "$(dirname "$SRC_REPO")"
+
+if [ ! -d "$SRC_REPO/.git" ]; then
+    if [ -d "$SRC_REPO" ] && [ "$(ls -A "$SRC_REPO" 2>/dev/null)" ]; then
+        ( cd "$SRC_REPO" && git init -b main 2>/dev/null && git remote add origin "$REPO_URL" 2>/dev/null || true )
+    else
+        git clone --depth 1 "$REPO_URL" "$SRC_REPO" || true
+    fi
+fi
+
+if [ -d "$SRC_REPO/.git" ]; then
+    ( cd "$SRC_REPO" || exit
+      cur_origin=$(git remote get-url origin 2>/dev/null || true)
+      case "$cur_origin" in
+          git@*) ;;
+          *) git remote set-url origin "$REPO_URL" 2>/dev/null || git remote add origin "$REPO_URL" 2>/dev/null || true ;;
+      esac
+      info "Fetching latest commits from $REPO_URL..."
+      if git fetch origin main --depth 1; then
+          PREV_REV=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+          git reset --hard origin/main
+          NEW_REV=$(git rev-parse --short HEAD)
+          if [ "$PREV_REV" != "$NEW_REV" ]; then
+              success "Updated to commit $NEW_REV (was $PREV_REV)"
+              echo "  Latest change: $(git log -1 --pretty=format:'%s (%cr)')"
+          else
+              success "Repository already at latest commit $NEW_REV"
+              echo "  Current commit: $(git log -1 --pretty=format:'%s (%cr)')"
+          fi
+      else
+          warn "Git fetch failed; downloading latest release archive directly..."
+          curl -sL https://github.com/MrMehulkhanna/mkos/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C "$SRC_REPO" || true
+      fi
+    )
+fi
+
+# Installed PCs only need what runs: leave developer files (notes, the push
+# helper, tests, ISO build/test scripts) out of the checkout and delete any
+# left by older updates. A developer checkout is marked with .mkos-dev.
+DEV_ONLY=('*HANDOFF*.md' AGENTS.md GEMINI.md push tests .github docs/demo.sh docs/selftest.sh
+          iso/build.sh iso/build_root.sh iso/flash.sh iso/publish.sh iso/test-install.sh iso/test-live.sh iso/test
+          desktop-audit-phase0.md session-status.md)
+if [ -d "$SRC_REPO/.git" ] && [ ! -e "$SRC_REPO/.mkos-dev" ]; then
+    ( cd "$SRC_REPO" || exit
+      { echo '/*'; for p in "${DEV_ONLY[@]}"; do echo "!/$p"; done; } >.git/info/sparse-checkout.new
+      git config core.sparseCheckout true
+      mv .git/info/sparse-checkout.new .git/info/sparse-checkout
+      git read-tree -mu HEAD 2>/dev/null || true )
+fi
+for d in "$SRC_REPO" /opt/aios; do
+    [ -d "$d" ] && [ ! -e "$d/.mkos-dev" ] || continue
+    for p in "${DEV_ONLY[@]}"; do
+        for t in "$d"/$p; do          # unquoted: entries may be patterns
+            [ -e "$t" ] || continue
+            if [ -w "$d" ]; then rm -rf "$t"; else sudo rm -rf "$t"; fi
+        done
+    done
+done
+
+if [ ! -d "$SRC_REPO/desktop/quickshell" ]; then
+    info "Fetching desktop assets archive..."
+    mkdir -p "$SRC_REPO"
+    curl -sL https://github.com/MrMehulkhanna/mkos/archive/refs/heads/main.tar.gz | tar -xz --strip-components=1 -C "$SRC_REPO" || true
+fi
+
+# ---------------------------------------------------------------------------
+# 3b. Install desktop packages from packages.x86_64
+# ---------------------------------------------------------------------------
+# Ensures packages added since the machine was installed are brought in
+if [ -f "$SRC_REPO/iso/packages.x86_64" ] && command -v pacman >/dev/null 2>&1; then
+    # ── continue with the updater we just downloaded ────────────────────────
+# Everything after this point used to run from the copy of this script that
+# was already in memory — the old one. So a fix to the updater itself only
+# took effect on the *next* update, and an installed PC that was behind got
+# its first update with old logic from start to finish. Hand over to the
+# fresh copy once, right after pulling it.
+NEW_UPDATER="$SRC_REPO/iso/airootfs/usr/local/bin/mkos-update"
+if [ -z "${MKOS_UPDATE_REEXEC:-}" ] && [ -f "$NEW_UPDATER" ] \
+   && ! cmp -s "$NEW_UPDATER" "$(readlink -f "$0" 2>/dev/null || echo "$0")"; then
+    info "A newer updater was downloaded — continuing with it"
+    if [ "$EUID" -eq 0 ]; then install -m755 "$NEW_UPDATER" /usr/local/bin/mkos-update
+    else sudo install -m755 "$NEW_UPDATER" /usr/local/bin/mkos-update; fi
+    export MKOS_UPDATE_REEXEC=1
+    exec /usr/local/bin/mkos-update "$@"
+fi
+
+log "Ensuring desktop package set from packages.x86_64 is installed"
+    mapfile -t DESKTOP_PKGS < <(awk '/^# @live-only/ { exit } /^[a-zA-Z0-9]/ { print $1 }' "$SRC_REPO/iso/packages.x86_64")
+    if [ "${#DESKTOP_PKGS[@]}" -gt 0 ]; then
+        if [ "$EUID" -eq 0 ]; then
+            pacman -S --needed --noconfirm "${DESKTOP_PKGS[@]}" || warn "Some desktop packages could not be installed"
+        else
+            sudo pacman -S --needed --noconfirm "${DESKTOP_PKGS[@]}" || warn "Some desktop packages could not be installed"
+        fi
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Synchronize Desktop & Shell Configurations
+# ---------------------------------------------------------------------------
+log "Updating desktop configurations (~/.config/quickshell, hypr, swaync)"
+
+sync_user_desktop() {
+    local target_home="$1"
+    local target_owner="$2"
+    [ -d "$target_home" ] || return 0
+
+    # old per-user copies of MKOS tools (~/.local/bin comes first in PATH)
+    # would hide the system ones and keep the update from taking effect
+    local f
+    for f in "$target_home"/.local/bin/mkos-* "$target_home"/.local/bin/mkos; do
+        [ -f "$f" ] && [ ! -L "$f" ] && [ -e "/usr/local/bin/${f##*/}" ] && rm -f "$f"
+    done
+
+    local qs_dir="$target_home/.config/quickshell"
+    mkdir -p "$qs_dir"
+    if [ -d "$SRC_REPO/desktop/quickshell" ]; then
+        if command -v rsync >/dev/null 2>&1; then
+            rsync -a --exclude 'settings.json' --exclude 'eyecomfort.json' "$SRC_REPO/desktop/quickshell/" "$qs_dir/"
+        else
+            for f in "$SRC_REPO/desktop/quickshell/"*; do
+                base=$(basename "$f")
+                [ "$base" = "settings.json" ] || [ "$base" = "eyecomfort.json" ] && continue
+                cp -a "$f" "$qs_dir/"
+            done
+        fi
+    fi
+
+    local hypr_dir="$target_home/.config/hypr"
+    mkdir -p "$hypr_dir"
+    if [ -d "$SRC_REPO/desktop/hypr" ]; then
+        if command -v rsync >/dev/null 2>&1; then
+            rsync -a --exclude 'mkos-local.lua' "$SRC_REPO/desktop/hypr/" "$hypr_dir/"
+        else
+            for f in "$SRC_REPO/desktop/hypr/"*; do
+                base=$(basename "$f")
+                [ "$base" = "mkos-local.lua" ] && continue
+                cp -a "$f" "$hypr_dir/"
+            done
+        fi
+    fi
+
+    for d in swaync rofi; do
+        if [ -d "$SRC_REPO/desktop/$d" ]; then
+            copy_tree "$SRC_REPO/desktop/$d" "$target_home/.config/$d"
+        fi
+    done
+
+    if [ -d "$SRC_REPO/desktop/wallpapers" ]; then
+        copy_tree "$SRC_REPO/desktop/wallpapers" "$target_home/.local/share/wallpapers"
+    fi
+
+    if [ -n "$target_owner" ] && [ "$EUID" -eq 0 ]; then
+        chown -R "$target_owner" "$qs_dir" "$target_home/.config/hypr" "$target_home/.config/swaync" "$target_home/.config/rofi" "$target_home/.local/share/wallpapers" 2>/dev/null || true
+    fi
+}
+
+# Update current user home
+sync_user_desktop "$HOME" ""
+
+# Update all human users in /home/*
+for udir in /home/*; do
+    if [ -d "$udir" ] && [ "$udir" != "$HOME" ]; then
+        uname=$(basename "$udir")
+        sync_user_desktop "$udir" "$uname"
+    fi
+done
+
+# Update /etc/skel so future users get newest settings
+if [ "$EUID" -eq 0 ]; then
+    sync_user_desktop "/etc/skel" ""
+fi
+
+success "Quickshell settings & Date/Time panel synchronized across all profiles"
+
+# ---------------------------------------------------------------------------
+# 5. Synchronize System Tools, Branding & Bootloader
+# ---------------------------------------------------------------------------
+log "Updating system tools, branding & bootloader"
+if [ -d "$SRC_REPO/iso/airootfs/usr/local/bin" ]; then
+    copy_tree_sudo "$SRC_REPO/iso/airootfs/usr/local/bin" /usr/local/bin
+    if [ -d "$SRC_REPO/iso/airootfs/usr/local/lib/mkos" ]; then
+        copy_tree_sudo "$SRC_REPO/iso/airootfs/usr/local/lib/mkos" /usr/local/lib/mkos
+    fi
+    if [ -d "$SRC_REPO/iso/airootfs/usr/share/pixmaps" ]; then
+        copy_tree_sudo "$SRC_REPO/iso/airootfs/usr/share/pixmaps" /usr/share/pixmaps
+    fi
+    if [ -d "$SRC_REPO/iso/airootfs/usr/share/icons" ]; then
+        copy_tree_sudo "$SRC_REPO/iso/airootfs/usr/share/icons" /usr/share/icons
+    fi
+    if [ "$EUID" -eq 0 ]; then
+        chmod 755 /usr/local/bin/mkos* /usr/local/bin/aios* 2>/dev/null || true
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo chmod 755 /usr/local/bin/mkos* /usr/local/bin/aios* 2>/dev/null || true
+    fi
+    # Ensure branding and os-release symlink
+    if [ -f "$SRC_REPO/iso/airootfs/usr/lib/mkos/os-release" ]; then
+        if [ "$EUID" -eq 0 ]; then
+            install -d -m755 /usr/lib/mkos
+            install -m644 "$SRC_REPO/iso/airootfs/usr/lib/mkos/os-release" /usr/lib/mkos/os-release
+            ln -sf /usr/lib/mkos/os-release /etc/os-release
+        elif command -v sudo >/dev/null 2>&1; then
+            sudo install -d -m755 /usr/lib/mkos
+            sudo install -m644 "$SRC_REPO/iso/airootfs/usr/lib/mkos/os-release" /usr/lib/mkos/os-release
+            sudo ln -sf /usr/lib/mkos/os-release /etc/os-release
+        fi
+    fi
+    # Ensure Limine boot menu entries are branded as MKOS Linux (with backup)
+    for LCONF in /boot/EFI/BOOT/limine.conf /boot/limine.conf /boot/EFI/limine/limine.conf; do
+        [ -f "$LCONF" ] || continue
+        if [ ! -f "${LCONF}.bak" ]; then
+            if [ "$EUID" -eq 0 ]; then cp -a "$LCONF" "${LCONF}.bak"
+            elif command -v sudo >/dev/null 2>&1; then sudo cp -a "$LCONF" "${LCONF}.bak"; fi
+        fi
+        if [ "$EUID" -eq 0 ]; then
+            grep -q '^interface_branding:' "$LCONF" || sed -i '1i interface_branding: MKOS Linux\nbackdrop: 0b0d12\n' "$LCONF"
+            sed -i 's|^/Arch Linux.*|/MKOS Linux|' "$LCONF"
+        elif command -v sudo >/dev/null 2>&1; then
+            sudo grep -q '^interface_branding:' "$LCONF" || sudo sed -i '1i interface_branding: MKOS Linux\nbackdrop: 0b0d12\n' "$LCONF"
+            sudo sed -i 's|^/Arch Linux.*|/MKOS Linux|' "$LCONF"
+        fi
+    done
+    # Boot straight into MKOS (no F9/F12 menu): fix the firmware boot order
+    # and fallback loader now, and re-check at every startup
+    if [ -x /usr/local/bin/mkos-bootfix ]; then
+        if [ "$EUID" -eq 0 ]; then
+            /usr/local/bin/mkos-bootfix --install || warn "boot order fix failed"
+        elif command -v sudo >/dev/null 2>&1; then
+            sudo /usr/local/bin/mkos-bootfix --install || warn "boot order fix failed"
+        fi
+    fi
+    # Hardware configuration: NVIDIA backlight handlers and udev backlight permissions
+    if [ -d "$SRC_REPO/iso/airootfs/etc/modprobe.d" ]; then
+        copy_tree_sudo "$SRC_REPO/iso/airootfs/etc/modprobe.d" /etc/modprobe.d
+    fi
+    if [ -d "$SRC_REPO/iso/airootfs/etc/udev/rules.d" ]; then
+        copy_tree_sudo "$SRC_REPO/iso/airootfs/etc/udev/rules.d" /etc/udev/rules.d
+        if [ "$EUID" -eq 0 ]; then
+            udevadm control --reload 2>/dev/null && udevadm trigger --subsystem-match=backlight 2>/dev/null || true
+        elif command -v sudo >/dev/null 2>&1; then
+            sudo udevadm control --reload 2>/dev/null && sudo udevadm trigger --subsystem-match=backlight 2>/dev/null || true
+        fi
+    fi
+    success "System tools, icons, backlight rules and bootloader updated"
+fi
+
+# ---------------------------------------------------------------------------
+# 5b. Graphics drivers, CPU microcode & firmware for THIS computer
+# ---------------------------------------------------------------------------
+# Detected from the PCI IDs exactly as the installer does, so a PC installed
+# from an older ISO (or with a GPU the old detection missed) gets its drivers.
+log "Checking graphics drivers, microcode & firmware"
+HWDETECT="$SRC_REPO/iso/airootfs/usr/local/lib/mkos/hwdetect.sh"
+[ -f "$HWDETECT" ] || HWDETECT=/usr/local/lib/mkos/hwdetect.sh
+if [ -f "$HWDETECT" ] && command -v pacman >/dev/null 2>&1; then
+    # shellcheck source=/dev/null
+    . "$HWDETECT"
+    read -ra HW_PKGS <<<"$(mkos_gpu_pkgs "$(lspci -nn 2>/dev/null || true)")"
+    UCODE=$(mkos_ucode "$(grep -m1 vendor_id /proc/cpuinfo | awk '{print $3}')")
+    [ -n "$UCODE" ] && HW_PKGS+=("$UCODE")
+    HW_PKGS+=(linux-firmware sof-firmware alsa-ucm-conf alsa-utils alsa-firmware pipewire-audio alsa-card-profiles alsa-plugins rtkit brightnessctl zenity poppler)
+    MISSING=()
+
+    for p in "${HW_PKGS[@]}"; do pacman -Q "$p" >/dev/null 2>&1 || MISSING+=("$p"); done
+    if [ "${#MISSING[@]}" -eq 0 ]; then
+        success "Drivers complete: ${HW_PKGS[*]}"
+    else
+        info "Installing: ${MISSING[*]}"
+        if [ "$EUID" -eq 0 ]; then
+            pacman -S --needed --noconfirm "${MISSING[@]}" || warn "Some drivers could not be installed"
+        else
+            sudo pacman -S --needed --noconfirm "${MISSING[@]}" || warn "Some drivers could not be installed"
+        fi
+        success "Drivers installed — restart the computer to start using them"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 5b-2. Audio drivers & speaker priority configuration
+# ---------------------------------------------------------------------------
+log "Configuring audio outputs and speaker priority"
+WP_DIR="/etc/wireplumber/wireplumber.conf.d"
+if [ "$EUID" -eq 0 ] || command -v sudo >/dev/null 2>&1; then
+    [ "$EUID" -eq 0 ] && install -d -m755 "$WP_DIR" || sudo install -d -m755 "$WP_DIR"
+    WP_PRIO="$WP_DIR/50-speaker-priority.conf"
+    cat << 'EOF' | ( [ "$EUID" -eq 0 ] && cat > "$WP_PRIO" || sudo tee "$WP_PRIO" >/dev/null )
+monitor.alsa.rules = [
+  {
+    matches = [
+      { node.name = "~alsa_output.*speaker*" }
+      { node.name = "~alsa_output.*Speaker*" }
+      { node.name = "~alsa_output.*Headphones*" }
+      { node.name = "~alsa_output.*headphones*" }
+    ]
+    actions = {
+      update-props = {
+        priority.driver = 1009
+        priority.session = 1009
+      }
+    }
+  },
+  {
+    matches = [
+      { node.name = "~alsa_output.*hdmi*" }
+      { node.name = "~alsa_output.*HDMI*" }
+    ]
+    actions = {
+      update-props = {
+        priority.driver = 600
+        priority.session = 600
+      }
+    }
+  },
+  {
+    matches = [
+      { node.name = "~alsa_input.*dmic*" }
+      { node.name = "~alsa_input.*Mic*" }
+      { node.name = "~alsa_input.*mic*" }
+      { node.name = "~alsa_input.*Headset*" }
+      { node.name = "~alsa_input.*headset*" }
+      { node.name = "~alsa_input.*internal*" }
+    ]
+    actions = {
+      update-props = {
+        priority.driver = 1009
+        priority.session = 1009
+      }
+    }
+  }
+]
+EOF
+fi
+
+# Unmute ALSA speaker/headphone channels and set comfortable default volume
+if command -v amixer >/dev/null 2>&1; then
+    for c in Master Speaker Headphone Playback; do
+        amixer sset "$c" unmute 80% >/dev/null 2>&1 || true
+    done
+    for c in Mic Capture; do
+        amixer sset "$c" unmute 80% >/dev/null 2>&1 || true
+    done
+fi
+if command -v wpctl >/dev/null 2>&1; then
+    wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 >/dev/null 2>&1 || true
+    wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 80% >/dev/null 2>&1 || true
+    wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 0 >/dev/null 2>&1 || true
+    wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SOURCE@ 80% >/dev/null 2>&1 || true
+fi
+
+# ---------------------------------------------------------------------------
+# 5b2. Direct cable link for screen sharing
+# ---------------------------------------------------------------------------
+# An Ethernet cable straight between two MKOS PCs has no router to hand out
+# addresses, so by default neither side gets one and they cannot see each
+# other. This profile still asks a router first (a normal LAN works as
+# before) and falls back to a link-local 169.254.x.x address after 8 s, so
+# two laptops on one cable find each other with no settings.
+log "Setting up direct-cable networking for screen sharing"
+if command -v nmcli >/dev/null 2>&1; then
+    if ! nmcli -t -f NAME con show 2>/dev/null | grep -qx mkos-direct; then
+        nmcli con add type ethernet con-name mkos-direct ifname "*" \
+            ipv4.method auto ipv4.link-local fallback ipv4.dhcp-timeout 8 \
+            ipv6.method link-local connection.autoconnect yes \
+            connection.autoconnect-priority 50 >/dev/null 2>&1 \
+            && success "cable link ready" || warn "could not add the cable profile"
+    else
+        nmcli con modify mkos-direct connection.interface-name "" ipv4.method auto \
+            ipv4.addresses "" ipv4.link-local fallback ipv4.dhcp-timeout 8 >/dev/null 2>&1 || true
+        success "cable link ready"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 5c. Voice typing & speech recognition (faster-whisper)
+# ---------------------------------------------------------------------------
+log "Checking voice typing speech recognition"
+# Voice typing needs the local AI backend, and that was only ever installed
+# if the user clicked "Set up the AI" on first boot. Skip it once and voice
+# typing never worked — and this step could not help, because it only
+# touched backends that already existed. Set it up for anyone missing it.
+if [ -d /opt/aios ] && command -v aios-setup >/dev/null 2>&1; then
+    for udir in /home/*; do
+        [ -d "$udir" ] || continue
+        [ -x "$udir/aios/.venv/bin/python" ] && continue
+        u=$(stat -c %U "$udir"); uid=$(id -u "$u" 2>/dev/null) || continue
+        [ "$uid" -ge 1000 ] || continue
+        info "Setting up voice typing and the AI backend for $u (one-time, downloads ~1 GB)…"
+        run_as_user() {
+            if [ "$(id -un)" = "$u" ]; then env AIOS_SETUP_UNATTENDED=1 "$@"
+            else sudo -u "$u" -H env XDG_RUNTIME_DIR="/run/user/$uid" \
+                     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" AIOS_SETUP_UNATTENDED=1 "$@"; fi
+        }
+        if run_as_user aios-setup </dev/null >/tmp/mkos-aios-setup.log 2>&1; then
+            success "Voice typing ready for $u"
+        else
+            warn "AI setup for $u did not finish — see /tmp/mkos-aios-setup.log"
+        fi
+    done
+fi
+for udir in /home/* "$HOME"; do
+    [ -d "$udir" ] || continue
+    aios_u="$udir/aios"
+    if [ -d "$aios_u" ] && [ -x "$aios_u/.venv/bin/pip" ]; then
+        if ! "$aios_u/.venv/bin/python" -c "import faster_whisper" >/dev/null 2>&1; then
+            info "Pre-installing faster-whisper for $(basename "$udir")..."
+            "$aios_u/.venv/bin/pip" install --quiet faster-whisper 2>/dev/null || true
+        fi
+    fi
+done
+
+# ── boot safety ─────────────────────────────────────────────────────────
+# Every change to how the PC boots goes through these. An update once left
+# a PC in emergency mode: a boot config was rewritten in place and rebuilt
+# with every error hidden (">/dev/null 2>&1 || true"), so a failed rebuild
+# left an unbootable system and nobody saw why. Now each rebuild keeps the
+# previous file, checks the result, and puts the old one back if the check
+# fails — a PC is never left with a boot config that cannot find its disk.
+as_root() { if [ "$EUID" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
+safe_grub_mkconfig() {
+    [ -f /boot/grub/grub.cfg ] || return 0
+    as_root cp -a /boot/grub/grub.cfg /boot/grub/grub.cfg.mkos-prev
+    if as_root grub-mkconfig -o /boot/grub/grub.cfg.mkos-new >/tmp/mkos-grub.log 2>&1 \
+       && ! grep -E '^\s*linux\s' /boot/grub/grub.cfg.mkos-new | grep -qv 'root=' \
+       && grep -qE '^\s*linux\s.*root=' /boot/grub/grub.cfg.mkos-new; then
+        as_root mv -f /boot/grub/grub.cfg.mkos-new /boot/grub/grub.cfg
+        success "boot menu rebuilt and checked"
+    else
+        as_root rm -f /boot/grub/grub.cfg.mkos-new
+        warn "boot menu rebuild failed its check — kept the previous one (see /tmp/mkos-grub.log)"
+    fi
+}
+# the newest installed kernel: after a kernel update and before the reboot,
+# the running kernel's modules are already gone, so uname -r is the wrong one
+mkos_kver() { ls /usr/lib/modules 2>/dev/null | sort -V | tail -1; }
+initramfs_ok() {   # every image has the drivers that find the root disk
+    local img n=0 kv list built
+    kv=$(mkos_kver); built="/usr/lib/modules/$kv/modules.builtin"
+    # unified kernel images (no separate initramfs files): nothing to check here
+    ls /boot/initramfs-*.img >/dev/null 2>&1 || return 0
+    for img in /boot/initramfs-*.img; do
+        case "$img" in *fallback*) continue ;; esac
+        [ -s "$img" ] || return 1
+        list=$(lsinitcpio "$img" 2>/dev/null) || return 1
+        # a driver counts if it is in the image or built into the kernel
+        { grep -qE '/nvme(-core)?\.ko' <<<"$list" || grep -qE '/nvme(-core)?\.ko' "$built" 2>/dev/null; } || return 1
+        { grep -qE '/(btrfs|ext4)\.ko' <<<"$list" || grep -qE '/(btrfs|ext4)\.ko' "$built" 2>/dev/null; } || return 1
+        n=$((n + 1))
+    done
+    [ "$n" -gt 0 ]
+}
+safe_mkinitcpio() {
+    local img
+    for img in /boot/initramfs-*.img; do [ -f "$img" ] && as_root cp -a "$img" "$img.mkos-prev"; done
+    if as_root mkinitcpio -P >/tmp/mkos-mkinitcpio.log 2>&1 && initramfs_ok; then
+        success "boot image rebuilt and checked"
+        return 0
+    fi
+    warn "boot image rebuild failed its check — restoring the previous one (see /tmp/mkos-mkinitcpio.log)"
+    for img in /boot/initramfs-*.img.mkos-prev; do [ -f "$img" ] && as_root cp -a "$img" "${img%.mkos-prev}"; done
+    return 1
+}
+
+# Clean up any obsolete backlight kernel parameters from /etc/default/grub
+if [ -f /etc/default/grub ] && grep -q "acpi_backlight=native" /etc/default/grub; then
+    log "Reverting acpi_backlight kernel option from GRUB"
+    as_root cp -a /etc/default/grub /etc/default/grub.mkos-prev
+    as_root sed -i 's/ *acpi_backlight=native//g' /etc/default/grub
+    safe_grub_mkconfig
+fi
+if [ -f /usr/local/bin/mkos-backlightfix ]; then
+    if [ "$EUID" -eq 0 ]; then rm -f /usr/local/bin/mkos-backlightfix
+    elif command -v sudo >/dev/null 2>&1; then sudo rm -f /usr/local/bin/mkos-backlightfix; fi
+fi
+
+# Ensure account lockout policy is safe and clear any failed login lockouts
+if [ "$EUID" -eq 0 ] || command -v sudo >/dev/null 2>&1; then
+    FAILLOCK_CONF="/etc/security/faillock.conf"
+    if [ ! -f "$FAILLOCK_CONF" ] || ! grep -q "admin_group = wheel" "$FAILLOCK_CONF" 2>/dev/null; then
+        cat << 'EOF' | ( [ "$EUID" -eq 0 ] && cat > "$FAILLOCK_CONF" || sudo tee "$FAILLOCK_CONF" >/dev/null )
+# MKOS account lockout policy: prevent locking out system administrator and primary user
+deny = 10
+unlock_time = 60
+fail_interval = 900
+even_deny_root = false
+admin_group = wheel
+EOF
+        [ "$EUID" -eq 0 ] && chmod 0644 "$FAILLOCK_CONF" || sudo chmod 0644 "$FAILLOCK_CONF"
+    fi
+    [ "$EUID" -eq 0 ] && faillock --reset 2>/dev/null || sudo faillock --reset 2>/dev/null || true
+
+    # Fail-safe emergency and rescue console (never lock out maintenance access)
+    EMERG_DIR="/etc/systemd/system/emergency.service.d"
+    RESCUE_DIR="/etc/systemd/system/rescue.service.d"
+    [ "$EUID" -eq 0 ] && install -d -m755 "$EMERG_DIR" "$RESCUE_DIR" || sudo install -d -m755 "$EMERG_DIR" "$RESCUE_DIR"
+    printf '[Service]\nEnvironment=SYSTEMD_SULOGIN_FORCE=1\n' | ( [ "$EUID" -eq 0 ] && cat > "$EMERG_DIR/override.conf" || sudo tee "$EMERG_DIR/override.conf" >/dev/null )
+    printf '[Service]\nEnvironment=SYSTEMD_SULOGIN_FORCE=1\n' | ( [ "$EUID" -eq 0 ] && cat > "$RESCUE_DIR/override.conf" || sudo tee "$RESCUE_DIR/override.conf" >/dev/null )
+    # Keep root password hash intact; never blank root password on installed systems
+fi
+
+# Storage drivers (Intel VMD, NVMe, SATA, USB, SD) in the boot image, so it
+# finds the root disk on any PC. Added through a drop-in, never by rewriting
+# /etc/mkinitcpio.conf in place (that replaced the whole MODULES line and
+# deleted autodetect with sed); modules that this kernel lacks are left out,
+# since one unknown module name fails the whole build.
+if [ -d /etc/mkinitcpio.conf.d ] || [ -f /etc/mkinitcpio.conf ]; then
+    want=""
+    for m in vmd nvme ahci sd_mod uas usb_storage mmc_block sdhci sdhci_pci sdhci_acpi btrfs ext4; do
+        modinfo -k "$(mkos_kver)" "$m" >/dev/null 2>&1 && want="$want $m"
+    done
+    new="# MKOS: storage drivers so the boot image finds the root disk on any PC
+MODULES+=(${want# })"
+    if [ "$(cat /etc/mkinitcpio.conf.d/mkos-storage.conf 2>/dev/null)" != "$new" ]; then
+        log "Making sure the boot image has the storage drivers"
+        as_root install -d -m755 /etc/mkinitcpio.conf.d
+        printf '%s\n' "$new" | as_root tee /etc/mkinitcpio.conf.d/mkos-storage.conf >/dev/null
+        safe_mkinitcpio || true
+    fi
+fi
+# whatever happened above or in the package update, never finish an update
+# with a boot image that cannot find the disk
+if ls /boot/initramfs-*.img >/dev/null 2>&1 && ! initramfs_ok; then
+    log "The boot image is missing disk drivers — rebuilding it"
+    safe_mkinitcpio || warn "could not rebuild a good boot image; the previous one was kept"
+fi
+
+# Ensure GRUB includes USB root delay and emergency console force
+if [ -f /etc/default/grub ]; then
+    if ! grep -q "SYSTEMD_SULOGIN_FORCE" /etc/default/grub 2>/dev/null; then
+        log "Updating GRUB bootloader parameters for fail-safe rescue"
+        as_root cp -a /etc/default/grub /etc/default/grub.mkos-prev
+        as_root sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"|GRUB_CMDLINE_LINUX_DEFAULT="\1 rootdelay=3 systemd.setenv=SYSTEMD_SULOGIN_FORCE=1"|' /etc/default/grub
+        safe_grub_mkconfig
+    fi
+fi
+
+# NVIDIA suspend, backlight & KMS configuration
+if pacman -Q nvidia-utils >/dev/null 2>&1; then
+    NV_MOD_CONF="/etc/modprobe.d/nvidia.conf"
+    NV_CONTENT=$'# NVIDIA Backlight, KMS & Power Management configuration for MKOS\noptions nvidia NVreg_RegistryDwords="EnableBrightnessControl=1"\noptions nvidia NVreg_PreserveVideoMemoryAllocations=1\noptions nvidia_drm modeset=1 fbdev=1'
+    if [ "$EUID" -eq 0 ]; then
+        systemctl enable nvidia-suspend.service nvidia-hibernate.service nvidia-resume.service 2>/dev/null || true
+        install -d -m755 /etc/modprobe.d /etc/systemd/system/systemd-suspend.service.d
+        echo 'options nvidia NVreg_PreserveVideoMemoryAllocations=1' >/etc/modprobe.d/nvidia-power-management.conf
+        printf '[Service]\nEnvironment="SYSTEMD_SLEEP_FREEZE_USER_SESSIONS=false"\n' >/etc/systemd/system/systemd-suspend.service.d/10-nvidia-no-freeze-session.conf
+        printf '%s\n' "$NV_CONTENT" >"$NV_MOD_CONF"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo systemctl enable nvidia-suspend.service nvidia-hibernate.service nvidia-resume.service 2>/dev/null || true
+        sudo install -d -m755 /etc/modprobe.d /etc/systemd/system/systemd-suspend.service.d
+        echo 'options nvidia NVreg_PreserveVideoMemoryAllocations=1' | sudo tee /etc/modprobe.d/nvidia-power-management.conf >/dev/null
+        printf '[Service]\nEnvironment="SYSTEMD_SLEEP_FREEZE_USER_SESSIONS=false"\n' | sudo tee /etc/systemd/system/systemd-suspend.service.d/10-nvidia-no-freeze-session.conf >/dev/null
+        printf '%s\n' "$NV_CONTENT" | sudo tee "$NV_MOD_CONF" >/dev/null
+    fi
+fi
+
+# Ensure laptop lid sleep behavior in logind
+LOGIND_MKOS="/etc/systemd/logind.conf.d/10-mkos.conf"
+if [ ! -f "$LOGIND_MKOS" ] || ! grep -q "HandleLidSwitch=suspend" "$LOGIND_MKOS" 2>/dev/null; then
+    if [ "$EUID" -eq 0 ]; then
+        install -d -m755 /etc/systemd/logind.conf.d
+        cat << 'EOF' > "$LOGIND_MKOS"
+[Login]
+HandleLidSwitch=suspend
+HandleLidSwitchExternalPower=suspend
+HandleLidSwitchDocked=ignore
+HandlePowerKey=poweroff
+HandleSuspendKey=suspend
+EOF
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo install -d -m755 /etc/systemd/logind.conf.d
+        cat << 'EOF' | sudo tee "$LOGIND_MKOS" >/dev/null
+[Login]
+HandleLidSwitch=suspend
+HandleLidSwitchExternalPower=suspend
+HandleLidSwitchDocked=ignore
+HandlePowerKey=poweroff
+HandleSuspendKey=suspend
+EOF
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Restart Desktop Shell & Reload the window manager
+# ---------------------------------------------------------------------------
+# hyprctl must talk to the user's session: as root it finds no instance
+log "Restarting desktop shell & reloading window manager"
+DESK_USER=$(ps -eo user:32,comm | awk '$2 ~ /^Hyprland$/ && $1 != "root" {print $1; exit}')
+if [ -n "$DESK_USER" ]; then
+    if [ "$(id -un)" = "$DESK_USER" ] && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+        hyprctl reload >/dev/null 2>&1 || true
+    else
+        sudo -u "$DESK_USER" env XDG_RUNTIME_DIR="/run/user/$(id -u "$DESK_USER")" hyprctl -i 0 reload >/dev/null 2>&1 || true
+    fi
+    success "Window manager configuration reloaded"
+fi
+
+mark_restart_if_needed "${RESTART_BEFORE:-}" "$(restart_snapshot)"
+if [ -s "$RESTART_MARKER" ]; then
+    echo -e "\n\033[1;33m  ⟳ A restart is needed to finish: $(cat "$RESTART_MARKER")\033[0m"
+fi
+
+if command -v mkos-restart-shell >/dev/null 2>&1; then
+    mkos-restart-shell &
+    success "Quickshell restarted with all new components"
+fi
+
+echo -e "\n\033[1;32m====================================================\033[0m"
+echo -e "\033[1;32m  MKOS UPDATE COMPLETED SUCCESSFULLY!\033[0m"
+echo -e "\033[1;32m====================================================\033[0m"
+notify "Update completed successfully! All changes are active."

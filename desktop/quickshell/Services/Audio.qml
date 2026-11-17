@@ -36,7 +36,7 @@ Singleton {
     // Set the default once, through WirePlumber (which remembers it), and do
     // not hold a Quickshell "preferred" node: Quickshell re-applies that
     // preference whenever the default changes, which overrode the outputs
-    // Praxis picks on purpose (speakers in step with a shared screen, all
+    // MKOS picks on purpose (speakers in step with a shared screen, all
     // speakers together) moments after they were chosen.
     Component.onCompleted: {
         Pipewire.preferredDefaultAudioSink = null
@@ -65,7 +65,7 @@ Singleton {
     }
     function _bestSink() {
         // prefer external (BT/USB/headphone), fall back to speaker / first sink
-        const ext = sinks.find(n => _isExternal(n) && !String(n.name || "").startsWith("praxis-"))
+        const ext = sinks.find(n => _isExternal(n) && !String(n.name || "").startsWith("mkos-"))
         if (ext) return ext
         const speaker = sinks.find(n => {
             const d = ((n.description || "") + " " + (n.nickname || "") + " " + (n.name || "")).toLowerCase()
@@ -74,19 +74,19 @@ Singleton {
         return speaker || sinks[0] || null
     }
     function _bestSource() {
-        // never a speaker monitor or a Praxis output as "the microphone":
+        // never a speaker monitor or a MKOS output as "the microphone":
         // either records silence (or your own speakers), so the mic looks dead
         const ext = sources.find(n => _isExternal(n) && !String(n.name || "").endsWith(".monitor")
-                                        && !String(n.name || "").startsWith("praxis-"))
+                                        && !String(n.name || "").startsWith("mkos-"))
         return ext || sources[0] || null
     }
 
     // Watch sinks list length — fires when a device plugs in or out
     onSinksChanged: {
-        // Leave Praxis's own outputs alone: "All selected speakers" and the
+        // Leave MKOS's own outputs alone: "All selected speakers" and the
         // in-step delay used while sharing are picked on purpose, and
         // creating them changes this list — switching away undid them.
-        if (sink && String(sink.name || "").startsWith("praxis-")) return
+        if (sink && String(sink.name || "").startsWith("mkos-")) return
         const best = _bestSink()
         if (best && best !== sink) setDefaultSink(best)
     }

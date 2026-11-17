@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# mkos-bootfix — make the PC start MKOS by itself, without the firmware's
+# boot menu (F9/F12). Many HP and Acer firmwares drop or reorder boot entries:
+# they put Windows Boot Manager back in front, forget entries after a BIOS or
+# Windows update, or only boot the disk's default loader \EFI\BOOT\BOOTX64.EFI.
+#
+# Each run (at every startup, and from mkos-update) it:
+#   1. re-creates the "MKOS" firmware entry if the firmware forgot it,
+#   2. puts it first in BootOrder (and drops a pending one-time BootNext),
+#   3. keeps \EFI\BOOT\BOOTX64.EFI a current copy of the MKOS loader —
+#      unless that file belongs to another OS (e.g. Windows' own fallback).
+# NVRAM is only written when something is actually wrong.
+#
+#   mkos-bootfix            fix now
+#   mkos-bootfix --install  also run it at every startup (systemd)
+#   mkos-bootfix --check    report only, change nothing
+set -uo pipefail
+
+say() { echo "mkos-bootfix: $*"; }
+[ "$EUID" -eq 0 ] || exec sudo "$0" "$@"
+
+MODE=fix
+case "${1:-}" in
+    --install) MODE=install ;;
+    --check) MODE=check ;;
+    "") ;;
+    *) echo "usage: mkos-bootfix [--install|--check]" >&2; exit 2 ;;
+esac
+
+if [ "$MODE" = install ]; then
+    cat >/etc/systemd/system/mkos-bootfix.service <<'EOF'
+[Unit]
+Description=Keep MKOS first in the firmware boot order
+After=local-fs.target
+ConditionPathExists=/sys/firmware/efi
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mkos-bootfix
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable mkos-bootfix.service >/dev/null 2>&1 || say "could not enable the startup service"
+    MODE=fix
+fi
+
+[ -d /sys/firmware/efi ] || { say "not started in UEFI mode — nothing to do"; exit 0; }
+
+ESP=""
+for d in ${MKOS_ESP:-} /boot/efi /efi /boot; do
+    [ -f "$d/EFI/MKOS/grubx64.efi" ] && { ESP=$d; break; }
+done
+# Not every system boots through the MKOS GRUB loader (a machine that was
+# Arch first may use Limine or systemd-boot). Nothing to fix there — say so
+# quietly instead of failing, which surfaced as "boot order fix failed".
+[ -n "$ESP" ] || { say "this PC does not boot through the MKOS loader — nothing to do"; exit 0; }
+LOADER="$ESP/EFI/MKOS/grubx64.efi"
+
+# 3. fallback loader: what firmware boots when it has no (usable) entry
+FB="$ESP/EFI/BOOT/BOOTX64.EFI"
+IS_HP=0
+if grep -qiE 'HP|Hewlett-Packard|Acer|Packard Bell|Gateway|Micro-Star|MSI|ASUSTeK|LENOVO|Dell|Gigabyte' /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/board_vendor 2>/dev/null; then
+    IS_HP=1
+fi
+
+if [ ! -e "$FB" ] || grep -aq 'GNU GRUB' "$FB" 2>/dev/null; then
+    if ! cmp -s "$LOADER" "$FB" 2>/dev/null; then
+        if [ "$MODE" = check ]; then say "fallback loader is missing or out of date"
+        else install -Dm644 "$LOADER" "$FB" && say "fallback loader updated"; fi
+    fi
+elif [ "$IS_HP" -eq 1 ] && [ "${MKOS_NO_NVRAM:-}" != 1 ]; then
+    # HP laptops frequently reset NVRAM or ignore custom boot entries, booting only
+    # \EFI\BOOT\BOOTX64.EFI. Back up the existing fallback loader and install GRUB.
+    if ! cmp -s "$LOADER" "$FB" 2>/dev/null; then
+        if [ "$MODE" = check ]; then say "HP firmware detected: fallback loader should be updated to MKOS GRUB"
+        else
+            [ ! -f "$FB.winbak" ] && cp -a "$FB" "$FB.winbak"
+            install -Dm644 "$LOADER" "$FB" && say "HP firmware detected: updated fallback loader to MKOS GRUB (backed up original to $FB.winbak)"
+        fi
+    fi
+else
+    say "fallback loader belongs to another OS — left alone"
+fi
+
+command -v efibootmgr >/dev/null || { say "efibootmgr is missing"; exit 0; }
+[ "${MKOS_NO_NVRAM:-}" = 1 ] && exit 0      # install tests: never touch the host's firmware
+
+# 1. the entry itself
+num() { efibootmgr 2>/dev/null | awk -v IGNORECASE=1 '/^Boot[0-9A-F]{4}\*? +MKOS([ \t]|$)/ { n = substr($1, 5, 4); print n; exit }'; }
+N=$(num)
+if [ -z "$N" ]; then
+    SRC=$(findmnt -no SOURCE "$ESP" | sed 's/\[.*\]//')
+    PK=$(lsblk -no PKNAME "$SRC" 2>/dev/null | head -1)
+    DISK=${PK:+/dev/$PK}
+    PART=$(cat "/sys/class/block/$(basename "$SRC")/partition" 2>/dev/null || lsblk -no PARTN "$SRC" 2>/dev/null | head -1)
+    if [ "$MODE" = check ]; then say "the MKOS firmware entry is missing"
+    elif [ -b "$DISK" ] && [ -n "$PART" ]; then
+        efibootmgr -q -c -d "$DISK" -p "$PART" -L MKOS -l '\EFI\MKOS\grubx64.efi' && say "re-created the MKOS firmware entry"
+        N=$(num)
+    else
+        say "could not work out the EFI partition ($SRC)"
+    fi
+fi
+[ -n "$N" ] || exit 0
+
+# 2. first in BootOrder
+ORDER=$(efibootmgr 2>/dev/null | awk '/^BootOrder:/ { print $2 }')
+if [ "${ORDER%%,*}" != "$N" ]; then
+    REST=$(tr ',' '\n' <<<"$ORDER" | grep -vix "$N" | paste -sd, -)
+    if [ "$MODE" = check ]; then say "MKOS is not first in the boot order ($ORDER)"
+    else efibootmgr -q -o "$N${REST:+,$REST}" && say "MKOS is first in the boot order again"; fi
+fi
+if efibootmgr 2>/dev/null | grep -q '^BootNext:'; then
+    [ "$MODE" = check ] && say "a one-time boot entry is pending" || efibootmgr -q -N
+fi
+[ "$MODE" = check ] && say "check done"
+exit 0

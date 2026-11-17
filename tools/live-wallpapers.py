@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render Praxis's live wallpapers: procedural, seamless video loops.
+"""Render MKOS's live wallpapers: procedural, seamless video loops.
 
     python tools/live-wallpapers.py [OUT_DIR] [--only NAME ...] [--seconds 16] [--preview]
 

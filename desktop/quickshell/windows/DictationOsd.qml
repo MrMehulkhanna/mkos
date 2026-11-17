@@ -7,7 +7,7 @@ import "root:/Services"
 import "root:/components"
 
 // Voice typing indicator: a pill at the bottom of the focused screen while
-// `praxis-dictate` listens or types. It follows the tool's state file, so it
+// `mkos-dictate` listens or types. It follows the tool's state file, so it
 // shows however dictation was started (Super+H, the terminal, a script).
 // Click-through: it never takes the focus away from the window being typed into.
 PanelWindow {
@@ -27,7 +27,7 @@ PanelWindow {
     readonly property bool shown: state !== "idle"
     visible: shown || hideAnim.running
 
-    readonly property string dir: Quickshell.env("XDG_RUNTIME_DIR") + "/praxis"
+    readonly property string dir: Quickshell.env("XDG_RUNTIME_DIR") + "/mkos"
     // the file must exist before it can be watched
     Process {
         running: true

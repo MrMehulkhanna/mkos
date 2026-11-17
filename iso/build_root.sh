@@ -1,32 +1,32 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  Praxis ISO builder — a bootable live + installer image built from this repo.
+#  MKOS ISO builder — a bootable live + installer image built from this repo.
 #
 #    iso/build.sh
-#    PRAXIS_BUILD_DIR=/mnt/big/praxis iso/build.sh      # custom work location
+#    MKOS_BUILD_DIR=/mnt/big/mkos iso/build.sh      # custom work location
 #
 #  Requirements: Arch Linux, internet, (archiso and mkarchiso need root).
 #  Everything that ships comes from the repository itself:
 #    desktop/          Quickshell shell + Hyprland/swaync/rofi config, wallpapers
 #    tracked files     the AIOS backend (git ls-files — nothing untracked leaks in)
-#    iso/airootfs/     installer, praxis-* tools, services, branding
+#    iso/airootfs/     installer, mkos-* tools, services, branding
 #    iso/packages.x86_64
-#  Build products live outside the repo in $PRAXIS_BUILD_DIR.
+#  Build products live outside the repo in $MKOS_BUILD_DIR.
 # ============================================================================
 set -euo pipefail
 
 ISO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd "$ISO_DIR/.." && pwd)
-BUILD=${PRAXIS_BUILD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/praxis-iso}
+BUILD=${MKOS_BUILD_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/mkos-iso}
 PROFILE=$BUILD/profile
 WORK=$BUILD/work
-OUT=${PRAXIS_OUT:-$BUILD/out}
+OUT=${MKOS_OUT:-$BUILD/out}
 AURREPO=$BUILD/aurrepo
 AURBUILD=$BUILD/aurbuild
 AIROOT=$PROFILE/airootfs
 
-# AUR packages bundled into a local [praxis] repo on the ISO. They are not
-# installed into the live image; praxis-install installs them onto targets.
+# AUR packages bundled into a local [mkos] repo on the ISO. They are not
+# installed into the live image; mkos-install installs them onto targets.
 AUR_PKGS=(piper-tts-bin yay-bin mpvpaper)
 GITHUB_ASSET_LIMIT=$((2 * 1024 * 1024 * 1024))
 
@@ -52,7 +52,7 @@ log "1/6  archiso"
 command -v mkarchiso >/dev/null || pacman -S --needed --noconfirm archiso
 
 # ----------------------------------------------------------------------------
-log "2/6  AUR packages → local [praxis] repository"
+log "2/6  AUR packages → local [mkos] repository"
 mkdir -p "$AURREPO"
 collect_aur() {
     local pkg=$1 cached tmp
@@ -71,18 +71,18 @@ collect_aur() {
     find "$tmp" -maxdepth 1 -name "*-x86_64.pkg.tar.zst" ! -name "*-debug-*" -exec cp {} "$AURREPO/" \;
 }
 for p in "${AUR_PKGS[@]}"; do collect_aur "$p"; done
-rm -f "$AURREPO"/*-debug-*.pkg.tar.zst "$AURREPO"/praxis.db* "$AURREPO"/praxis.files*
-repo-add -q "$AURREPO/praxis.db.tar.gz" "$AURREPO"/*.pkg.tar.zst
+rm -f "$AURREPO"/*-debug-*.pkg.tar.zst "$AURREPO"/mkos.db* "$AURREPO"/mkos.files*
+repo-add -q "$AURREPO/mkos.db.tar.gz" "$AURREPO"/*.pkg.tar.zst
 
 # ----------------------------------------------------------------------------
 log "3/6  archiso profile (from releng)"
 wipe "$PROFILE"                     # previous mkarchiso runs leave root-owned files
 cp -r /usr/share/archiso/configs/releng "$PROFILE"
 sed -i \
-    -e 's/^iso_name=.*/iso_name="praxis"/' \
-    -e "s/^iso_label=.*/iso_label=\"PRAXIS_$(date +%Y%m)\"/" \
-    -e 's/^iso_publisher=.*/iso_publisher="Praxis Linux <https:\/\/github.com\/MrMehulkhanna\/praxis>"/' \
-    -e 's/^iso_application=.*/iso_application="Praxis Linux live and installer"/' \
+    -e 's/^iso_name=.*/iso_name="mkos"/' \
+    -e "s/^iso_label=.*/iso_label=\"MKOS_$(date +%Y%m)\"/" \
+    -e 's/^iso_publisher=.*/iso_publisher="MKOS Linux <https:\/\/github.com\/MrMehulkhanna\/mkos>"/' \
+    -e 's/^iso_application=.*/iso_application="MKOS Linux live and installer"/' \
     "$PROFILE/profiledef.sh"
 
 # ----------------------------------------------------------------------------
@@ -128,10 +128,10 @@ ln -sf /usr/lib/systemd/system/bluetooth.service "$UNITS/dbus-org.bluez.service"
 # The live account has a published password and passwordless sudo: never
 # accept it over the network. (iso/airootfs also blocks password SSH for it.)
 rm -f "$UNITS/multi-user.target.wants/sshd.service"
-# The live session gets live wallpapers too: mpvpaper from the bundled [praxis]
+# The live session gets live wallpapers too: mpvpaper from the bundled [mkos]
 # repository. Build-time only — mkarchiso does not copy this pacman.conf into the
-# image; praxis-install registers /opt/praxis-repo on targets itself.
-printf '\n[praxis]\nSigLevel = Optional TrustAll\nServer = file://%s\n' "$AURREPO" >> "$PROFILE/pacman.conf"
+# image; mkos-install registers /opt/mkos-repo on targets itself.
+printf '\n[mkos]\nSigLevel = Optional TrustAll\nServer = file://%s\n' "$AURREPO" >> "$PROFILE/pacman.conf"
 echo mpvpaper >> "$PROFILE/packages.x86_64"
 # Live image only: skip documentation and non-English translations (~0.5 GB).
 # Installed systems are pacstrapped with the stock pacman.conf and get both.
@@ -149,8 +149,8 @@ log "6/6  permissions + mkarchiso"
 {
     echo "file_permissions+=("
     (cd "$ISO_DIR/airootfs" && find . -type f -perm -u+x -printf '  ["/%P"]="0:0:755"\n')
-    echo '  ["/etc/sudoers.d/praxis-live"]="0:0:440"'
-    echo '  ["/etc/sudoers.d/praxis-nopasswd"]="0:0:440"'
+    echo '  ["/etc/sudoers.d/mkos-live"]="0:0:440"'
+    echo '  ["/etc/sudoers.d/mkos-nopasswd"]="0:0:440"'
     echo '  ["/usr/local/libexec/aios-hardware"]="0:0:755"'
     echo ")"
 } >> "$PROFILE/profiledef.sh"
@@ -159,7 +159,7 @@ bash -n "$PROFILE/profiledef.sh" || die "generated profiledef.sh is invalid"
 wipe "$WORK"
 mkarchiso -v -w "$WORK" -o "$OUT" "$PROFILE"
 
-ISO=$(ls -t "$OUT"/praxis-*.iso | head -1)
+ISO=$(ls -t "$OUT"/mkos-*.iso | head -1)
 chown "$(id -u):$(id -g)" "$ISO"
 (cd "$OUT" && sha256sum "$(basename "$ISO")" > "$(basename "$ISO").sha256")
 SIZE=$(stat -c %s "$ISO")

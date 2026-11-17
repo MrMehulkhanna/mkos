@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Praxis Linux (AIOS) — Live WebBrowser OS Desktop Simulator Styles
+   MKOS Linux (AIOS) — Live WebBrowser OS Desktop Simulator Styles
    ========================================================================== */
 
 :root {
@@ -1634,7 +1634,7 @@
   color: #93c5fd;
 }
 
-.part-box.praxis {
+.part-box.mkos {
   flex: 3;
   background: rgba(187, 154, 247, 0.35);
   border-right: 1px solid rgba(255, 255, 255, 0.1);

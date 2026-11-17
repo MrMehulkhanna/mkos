@@ -28,20 +28,20 @@ STT_URL  = "http://127.0.0.1:8778/api/voice/transcribe"
 # The API requires a token (see ~/aios/src/core/auth.py). It lives in a
 # 0600 file that only this user can read, so reading it is the whole
 # handshake — no prompt, no config.
-def _praxis_token() -> str:
+def _mkos_token() -> str:
     import os as _o, pathlib as _p
     t = _o.environ.get("AIOS_TOKEN", "").strip()
     if t:
         return t
     for f in (_p.Path(_o.environ.get("AIOS_HOME", _p.Path.home() / "aios")) / "config" / "aios.token",
-              _p.Path("/etc/praxis/aios.token")):
+              _p.Path("/etc/mkos/aios.token")):
         try:
             return f.read_text().strip()
         except OSError:
             pass
     return ""
 
-_AUTH = {"Authorization": "Bearer " + _praxis_token()}
+_AUTH = {"Authorization": "Bearer " + _mkos_token()}
 
 DEFAULT_MODEL = "auto"   # server resolves to the one model selected everywhere
 

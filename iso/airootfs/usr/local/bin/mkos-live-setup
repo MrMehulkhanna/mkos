@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# mkos-live-setup — runs once per live boot (mkos-live-setup.service,
+# before getty@tty1). Creates the autologin user and pins the installer to
+# the dock. Only ever active on live media (ConditionPathExists=/run/archiso).
+set -euo pipefail
+
+USER_NAME=mkos
+HOME_DIR=/home/$USER_NAME
+
+if ! id "$USER_NAME" &>/dev/null; then
+    useradd -m -G wheel,video,audio,input,network,storage,users -s /bin/bash "$USER_NAME"
+    # Well-known live password (the session autologs in; sudo is passwordless
+    # on live media only). Installed systems use the password chosen in the installer.
+    echo "${USER_NAME}:mkos" | chpasswd
+    echo "root:mkos" | chpasswd
+fi
+
+# Populate the home from /etc/skel if it is still empty.
+if [ ! -e "$HOME_DIR/.bash_profile" ]; then
+    cp -aT /etc/skel "$HOME_DIR"
+fi
+
+# Live dock: the installer first, then the everyday apps.
+install -d "$HOME_DIR/.config/quickshell" "$HOME_DIR/.config/mkos" "$HOME_DIR/.config/hypr"
+if [ ! -e "$HOME_DIR/.config/quickshell/settings.json" ]; then
+    cat > "$HOME_DIR/.config/quickshell/settings.json" <<'EOF'
+{
+    "dockFavorites": ["mkos-install", "firefox", "kitty", "thunar"],
+    "dockAutoHide": true,
+    "wallpaper": "deep-purple.png"
+}
+EOF
+fi
+
+# Preconfigure default signature wallpaper state for hyprpaper & live session
+if [ ! -e "$HOME_DIR/.config/mkos/wallpaper.state" ]; then
+    cat > "$HOME_DIR/.config/mkos/wallpaper.state" <<EOF
+mode=still
+still=$HOME_DIR/.local/share/wallpapers/deep-purple.png
+live=
+EOF
+fi
+
+if [ ! -e "$HOME_DIR/.config/hypr/hyprpaper.conf" ]; then
+    cat > "$HOME_DIR/.config/hypr/hyprpaper.conf" <<EOF
+splash = false
+ipc = true
+
+wallpaper {
+    monitor =
+    path = $HOME_DIR/.local/share/wallpapers/deep-purple.png
+    fit_mode = cover
+}
+EOF
+fi
+
+chown -R "$USER_NAME:$USER_NAME" "$HOME_DIR"
+exit 0

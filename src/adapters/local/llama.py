@@ -88,8 +88,8 @@ PROFILES: dict[str, dict] = {
 DEFAULT_MODEL = "local-qwen3-4b"
 
 def _discover() -> None:
-    """Anything else in ~/aios/models — downloaded with praxis-models or dropped in by
-    hand — becomes selectable too, labelled from its praxis-model.json when present."""
+    """Anything else in ~/aios/models — downloaded with mkos-models or dropped in by
+    hand — becomes selectable too, labelled from its mkos-model.json when present."""
     known = {p["dir"] for p in PROFILES.values()}
     for d in sorted((HOME / "models").glob("*")):
         if not d.is_dir() or d.name in known or d.name.startswith("piper"):
@@ -98,7 +98,7 @@ def _discover() -> None:
         if not ggufs:
             continue
         try:
-            meta = json.loads((d / "praxis-model.json").read_text())
+            meta = json.loads((d / "mkos-model.json").read_text())
         except (OSError, ValueError):
             meta = {}
         if "embed" in d.name or "embed" in meta.get("tags", []):

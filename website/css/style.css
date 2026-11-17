@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Praxis Linux (AIOS) — Official Production Website Stylesheet
+   MKOS Linux (AIOS) — Official Production Website Stylesheet
    Crafted for Maximum Fluidity, Glassmorphism & High-Performance Typography
    ========================================================================== */
 
@@ -541,7 +541,7 @@ section {
 }
 
 /* ==========================================================================
-   Why Praxis & Creator Intent (The Manifesto)
+   Why MKOS & Creator Intent (The Manifesto)
    ========================================================================== */
 .intent-grid {
   display: grid;
@@ -648,7 +648,7 @@ section {
 }
 
 /* ==========================================================================
-   Windows 11 vs Praxis Comparison Table
+   Windows 11 vs MKOS Comparison Table
    ========================================================================== */
 .table-wrap {
   overflow-x: auto;
@@ -699,7 +699,7 @@ section {
   color: #cbd5e1;
 }
 
-.col-praxis {
+.col-mkos {
   width: 36%;
   background: rgba(88, 225, 255, 0.03);
   color: #ffffff;
@@ -1959,7 +1959,7 @@ section {
   width: max-content;
   white-space: nowrap;
   will-change: transform;
-  animation: praxisMarquee 32s linear infinite;
+  animation: mkosMarquee 32s linear infinite;
   font-family: var(--font-mono);
   font-size: 0.78rem;
   font-weight: 600;
@@ -1972,7 +1972,7 @@ section {
   opacity: 0.75;
 }
 
-@keyframes praxisMarquee {
+@keyframes mkosMarquee {
   0% { transform: translate3d(0, 0, 0); }
   100% { transform: translate3d(-50%, 0, 0); }
 }

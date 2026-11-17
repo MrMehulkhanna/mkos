@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# mkos-installer — the graphical installer (Install MKOS Linux in the dock).
+# Falls back to the text installer when there is no Wayland session.
+# MKOS_ENGINE / MKOS_LIB point it at a checkout during development.
+if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v quickshell >/dev/null; then
+    exec quickshell -p /usr/local/share/mkos/installer/shell.qml "$@"
+fi
+exec kitty --class mkos-installer --title "Install MKOS Linux" -e /usr/local/bin/mkos-install-window

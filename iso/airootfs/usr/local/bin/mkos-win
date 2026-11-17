@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""mkos-win — window snapping and layout switching for Hyprland.
+
+  mkos-win snap left|right        half of the screen
+  mkos-win snap left3|mid3|right3 a third (left / centre / right column)
+  mkos-win snap max               maximise (again: back)
+  mkos-win snap restore           back into the tiling layout
+  mkos-win layout                 next layout: tiles → master + stack →
+                                    3 columns (master in the middle) → tiles
+  mkos-win show-desktop           toggle special workspace to reveal clean desktop (Win+D)
+  mkos-win minimize [ADDRESS]     send a window to special:minimized and hide it
+  mkos-win unminimize             bring the minimised windows back into view
+
+A snapped window floats at the exact spot, inside the space the bar and the
+dock leave free, with the same gap as tiled windows.
+"""
+import json
+import subprocess
+import sys
+
+GAP = 8      # logical px around a snapped window; matches general.gaps_out
+
+
+def hypr(*args):
+    return subprocess.run(["hyprctl", *args], capture_output=True, text=True).stdout
+
+
+def query(what):
+    try:
+        return json.loads(hypr(what, "-j"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def dispatch(expr):
+    hypr("dispatch", expr)
+
+
+def notify(text):
+    subprocess.run(["notify-send", "-a", "MKOS", "-t", "1500", "Layout", text],
+                   stderr=subprocess.DEVNULL, check=False)
+
+
+def snap(where):
+    win = query("activewindow")
+    if not win or not win.get("address"):
+        return
+    if where == "max":
+        dispatch('hl.dsp.window.fullscreen({ mode = "maximized" })')
+        return
+    if where == "restore":
+        if win.get("fullscreen"):
+            dispatch('hl.dsp.window.fullscreen({ mode = "maximized" })')
+        elif win.get("floating"):
+            dispatch('hl.dsp.window.float({ action = "disable" })')
+        return
+    mon = next((m for m in query("monitors") if m["id"] == win["monitor"]), None)
+    if mon is None:
+        return
+    scale = mon["scale"] or 1
+    w, h = mon["width"] / scale, mon["height"] / scale
+    if mon["transform"] % 2:          # rotated 90/270°
+        w, h = h, w
+    left, top, right, bottom = mon["reserved"]
+    x0, y0 = mon["x"] + left + GAP, mon["y"] + top + GAP
+    aw, ah = w - left - right - 2 * GAP, h - top - bottom - 2 * GAP
+    cols, col = {"left": (2, 0), "right": (2, 1),
+                 "left3": (3, 0), "mid3": (3, 1), "right3": (3, 2)}[where]
+    cw = (aw - (cols - 1) * GAP) / cols
+    if win.get("fullscreen"):
+        dispatch('hl.dsp.window.fullscreen({ mode = "maximized" })')
+    if not win.get("floating"):
+        dispatch('hl.dsp.window.float({ action = "enable" })')
+    dispatch(f"hl.dsp.window.resize({{ x = {int(cw)}, y = {int(ah)} }})")
+    dispatch(f"hl.dsp.window.move({{ x = {int(x0 + col * (cw + GAP))}, y = {int(y0)} }})")
+
+
+def next_layout():
+    layout = hypr("getoption", "general:layout").split()[1:2] or ["dwindle"]
+    orient = hypr("getoption", "master:orientation").split()[1:2] or ["left"]
+    if layout[0] == "dwindle":
+        hypr("eval", 'hl.config({ general = { layout = "master" }, master = { orientation = "left" } })')
+        notify("Master + stack")
+    elif layout[0] == "master" and orient[0] != "center":
+        hypr("eval", 'hl.config({ master = { orientation = "center", slave_count_for_center_master = 0 } })')
+        notify("3 columns")
+    else:
+        hypr("eval", 'hl.config({ general = { layout = "dwindle" } })')
+        notify("Tiles")
+
+
+def show_desktop():
+    # Toggle special:desktop to reveal clean desktop wallpaper like Windows Win+D
+    dispatch('hl.dsp.workspace.toggle_special("desktop")')
+
+
+MIN_WS = "special:minimized"
+
+
+def special_shown(name=MIN_WS):
+    """Is that special workspace currently displayed on any monitor?"""
+    for m in query("monitors") or []:
+        if (m.get("specialWorkspace") or {}).get("name") == name:
+            return True
+    return False
+
+
+def minimize(address=None):
+    """Send a window out of sight.
+
+    follow = false is the whole fix. Moving a window into a special
+    workspace *opens that workspace on the monitor*, so the window lands
+    somewhere still visible and minimising looks like it did nothing.
+    Hiding it afterwards does not work either: the move is asynchronous, so
+    a check of the monitor state straight after still reports the workspace
+    hidden, the toggle is skipped, and Hyprland then shows it anyway. Asking
+    not to follow avoids the race instead of trying to win it.
+
+    The address is passed explicitly where the caller has one, because a
+    click on the bar can move focus before the dispatch lands, and then
+    "the active window" is no longer the window the user meant.
+    """
+    target = f', window = "address:{address}"' if address else ""
+    dispatch(f'hl.dsp.window.move({{ workspace = "{MIN_WS}", follow = false{target} }})')
+
+
+def unminimize():
+    dispatch(f'hl.dsp.workspace.toggle_special("{MIN_WS.split(":", 1)[1]}")')
+
+
+def main(argv):
+    if len(argv) >= 2 and argv[0] == "snap" and argv[1] in (
+            "left", "right", "left3", "mid3", "right3", "max", "restore"):
+        snap(argv[1])
+    elif argv[:1] == ["layout"]:
+        next_layout()
+    elif argv[:1] == ["show-desktop"]:
+        show_desktop()
+    elif argv[:1] == ["minimize"]:
+        minimize(argv[1] if len(argv) > 1 else None)
+    elif argv[:1] == ["unminimize"]:
+        unminimize()
+    else:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

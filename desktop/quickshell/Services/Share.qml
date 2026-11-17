@@ -4,9 +4,9 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Hyprland
 
-// Screen sharing between two Praxis machines — the state behind ShareWindow.
+// Screen sharing between two MKOS machines — the state behind ShareWindow.
 //
-// Everything real happens in praxis-share; this watches it and drives it, so
+// Everything real happens in mkos-share; this watches it and drives it, so
 // the window and the CLI can never disagree about what is running.
 Singleton {
     id: root
@@ -18,7 +18,7 @@ Singleton {
     property bool   withAudio:  true
     property string mode:       "extend"   // extend | mirror
     property string mirrorOf:   ""
-    property bool   ready:      false      // praxis-share doctor is happy
+    property bool   ready:      false      // mkos-share doctor is happy
     property string blockedBy:  ""         // what is missing, if anything
     property string pairCode:   ""         // shown by the host, typed on the viewer
     property var    nearbyHosts: []        // auto-discovered machines sharing on local Wi-Fi
@@ -56,7 +56,7 @@ Singleton {
 
     Process {
         id: scanProc
-        command: ["praxis-share-gate", "scan"]
+        command: ["mkos-share-gate", "scan"]
         stdout: StdioCollector {
             onStreamFinished: {
                 root.scanning = false
@@ -81,8 +81,8 @@ Singleton {
         // shell's brace expansion would be eaten by JavaScript before bash
         // ever saw it. Plain $VAR only.
         command: ["bash", "-c", `
-S="$XDG_RUNTIME_DIR/praxis-share"
-[ -n "$XDG_RUNTIME_DIR" ] || S="/run/user/$(id -u)/praxis-share"
+S="$XDG_RUNTIME_DIR/mkos-share"
+[ -n "$XDG_RUNTIME_DIR" ] || S="/run/user/$(id -u)/mkos-share"
 GATE="$S/gate.pid"
 PID="$S/capture.pid"
 if ([ -f "$GATE" ] && kill -0 "$(cat "$GATE")" 2>/dev/null) || ([ -f "$PID" ] && kill -0 "$(cat "$PID")" 2>/dev/null); then
@@ -106,7 +106,7 @@ if [ -f "$S/viewer.pids" ] && kill -0 "$(awk '{print $1}' "$S/viewer.pids" 2>/de
   echo "viewing=1"
   echo "viewTarget=$(cat "$S/viewer.target" 2>/dev/null)"
 fi
-M="$XDG_RUNTIME_DIR/praxis-mouse"
+M="$XDG_RUNTIME_DIR/mkos-mouse"
 if [ -f "$M/daemon.pid" ] && kill -0 "$(cat "$M/daemon.pid")" 2>/dev/null; then echo "mouseOn=1"; else echo "mouseOn=0"; fi
 # per [[clients]] block, in whatever order lan-mouse wrote the fields
 echo "mousePeers=$(awk -F' = ' '/^\[\[clients\]\]/{if(p!="")printf "%s:%s,",p,h;p="";h=""} /^position/{gsub(/"/,"",$2);p=$2} /^hostname/{gsub(/"/,"",$2);h=$2} END{if(p!="")printf "%s:%s,",p,h}' "$HOME/.config/lan-mouse/config.toml" 2>/dev/null)"
@@ -162,7 +162,7 @@ fi
     function checkReady() { if (!doctorProc.running) doctorProc.running = true }
     Process {
         id: doctorProc
-        command: ["bash", "-c", "praxis-share doctor 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g'"]
+        command: ["bash", "-c", "mkos-share doctor 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g'"]
         stdout: StdioCollector {
             onStreamFinished: {
                 const missing = []
@@ -178,14 +178,14 @@ fi
 
     // ── actions ────────────────────────────────────────────────────────
     function start() {
-        const args = ["praxis-share", root.mode === "mirror" ? "mirror" : "extend",
+        const args = ["mkos-share", root.mode === "mirror" ? "mirror" : "extend",
                       "--port", String(root.port)]
         if (root.mode === "mirror" && root.mirrorOf) { args.push("--output"); args.push(root.mirrorOf) }
         if (!root.withAudio) args.push("--no-audio")
         act.command = args
         act.running = true
     }
-    function stop() { act.command = ["praxis-share", "stop"]; act.running = true }
+    function stop() { act.command = ["mkos-share", "stop"]; act.running = true }
     // ── viewing someone else's screen ─────────────────────────────────
     // A Process we own, not a terminal: the window knows when the viewer is
     // up, can show what it is connected to, and can end it.
@@ -207,11 +207,11 @@ fi
             const hostOnly = t.split(":")[0]
             if (hostOnly) root.joinInput(hostOnly)
         }
-        viewer.command = ["praxis-share", "connect", t, "--code", code]
+        viewer.command = ["mkos-share", "connect", t, "--code", code]
         viewer.running = true
     }
     function disconnect() {
-        Quickshell.execDetached(["praxis-share", "disconnect"])
+        Quickshell.execDetached(["mkos-share", "disconnect"])
         if (root.inputSharing) root.stopInput()
         viewer.running = false
         root.viewing = false
@@ -221,11 +221,11 @@ fi
     property var screens: []               // [{name, model, x, y, w, h}] in logical px
     function refreshScreens() { if (!screensProc.running) screensProc.running = true }
     function arrange(order) {
-        Quickshell.execDetached(["praxis-share", "arrange"].concat(order))
+        Quickshell.execDetached(["mkos-share", "arrange"].concat(order))
         arrangeSoon.start()
     }
     function place(positions) {
-        Quickshell.execDetached(["praxis-share", "place"].concat(positions))
+        Quickshell.execDetached(["mkos-share", "place"].concat(positions))
         arrangeSoon.start()
     }
     Timer { id: arrangeSoon; interval: 600; onTriggered: root.refreshScreens() }
@@ -251,11 +251,11 @@ fi
                 || ev.name === "monitorremovedv2" || ev.name === "configreloaded") root.refreshScreens()
             // a reload puts screens back where the config says: restore the
             // layout the user arranged
-            if (ev.name === "configreloaded") Quickshell.execDetached(["praxis-share", "restore-layout"])
+            if (ev.name === "configreloaded") Quickshell.execDetached(["mkos-share", "restore-layout"])
         }
     }
 
-    // ── one mouse & keyboard across PCs (praxis-mouse / lan-mouse) ────────
+    // ── one mouse & keyboard across PCs (mkos-mouse / lan-mouse) ────────
     // Only input crosses the network and the other PC draws its own pointer,
     // so it is as smooth as a mouse plugged into that PC.
     property bool mouseOn:    false
@@ -266,20 +266,20 @@ fi
     function mouseMove(from, to) {
         const ip = root.mouseIps[from]
         if (!ip) return
-        Quickshell.execDetached(["praxis-mouse", "forget", from])
+        Quickshell.execDetached(["mkos-mouse", "forget", from])
         root.mousePair(ip, to)
     }
     function mouseSet(on) {
-        Quickshell.execDetached(["praxis-mouse", on ? "on" : "off"])
+        Quickshell.execDetached(["mkos-mouse", on ? "on" : "off"])
         root.mouseOn = on; soon.start()
     }
     function mousePair(host, pos) {
         root.mouseMsg = "Pairing…"
-        mousePairProc.command = ["praxis-mouse", "pair", host, pos]
+        mousePairProc.command = ["mkos-mouse", "pair", host, pos]
         mousePairProc.running = true
     }
     function mouseForget(pos) {
-        Quickshell.execDetached(["praxis-mouse", "forget", pos]); soon.start()
+        Quickshell.execDetached(["mkos-mouse", "forget", pos]); soon.start()
     }
     Process {
         id: mousePairProc
@@ -288,18 +288,18 @@ fi
         onExited: (code) => {
             root.mouseMsg = code === 0 ? "Paired — move the pointer off that edge."
                 : ((mpErr.text || "").split("\n").filter(l => l).pop() || "Could not pair.")
-                    .replace(/\x1b\[[0-9;]*m/g, "").replace(/^praxis-mouse: /, "")
+                    .replace(/\x1b\[[0-9;]*m/g, "").replace(/^mkos-mouse: /, "")
             soon.start()
         }
     }
     function startInput(peer) {
-        Quickshell.execDetached(["praxis-share", "input", "host", "--peer", peer || "praxis-peer"])
+        Quickshell.execDetached(["mkos-share", "input", "host", "--peer", peer || "mkos-peer"])
     }
     function joinInput(host) {
-        Quickshell.execDetached(["praxis-share", "input", "join", host])
+        Quickshell.execDetached(["mkos-share", "input", "join", host])
     }
     function stopInput() {
-        Quickshell.execDetached(["praxis-share", "input", "stop"])
+        Quickshell.execDetached(["mkos-share", "input", "stop"])
     }
     Process {
         id: viewer
@@ -309,7 +309,7 @@ fi
                 const t = this.text.replace(/\x1b\[[0-9;]*m/g, "").trim()
                 if (t.indexOf("not accepted") >= 0) root.connectError = "Wrong code — check the four digits on the other PC."
                 else if (t.indexOf("cannot reach") >= 0) root.connectError = "Cannot reach that PC. Is it still sharing, on the same Wi-Fi?"
-                else if (t.indexOf("viewer stopped") >= 0) root.connectError = "The picture stopped. Run praxis-share doctor on this PC."
+                else if (t.indexOf("viewer stopped") >= 0) root.connectError = "The picture stopped. Run mkos-share doctor on this PC."
             }
         }
         onExited: {
@@ -324,11 +324,11 @@ fi
         Quickshell.execDetached(["hyprctl", "dispatch",
             'hl.dsp.window.move({ monitor = "' + mon + '" })'])
     }
-    function bringBack() { Quickshell.execDetached(["praxis-share", "bring-back"]) }
+    function bringBack() { Quickshell.execDetached(["mkos-share", "bring-back"]) }
 
     Process {
         id: act
-        stderr: StdioCollector { onStreamFinished: if (this.text.trim()) console.warn("praxis-share:", this.text.trim()) }
+        stderr: StdioCollector { onStreamFinished: if (this.text.trim()) console.warn("mkos-share:", this.text.trim()) }
         onExited: soon.start()
     }
     Timer { id: soon; interval: 700; onTriggered: root.refresh() }

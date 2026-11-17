@@ -70,7 +70,7 @@ done`]
     property bool probedOled: false
     readonly property bool hasOled: probedOled || panels.some(p => p.oled)
 
-    // ── OLED colour (praxis-display color) ─────────────────────────────
+    // ── OLED colour (mkos-display color) ─────────────────────────────
     // Hyprland drives outputs through the srgb preset at 8 bits unless told
     // otherwise; on a wide-gamut OLED that is the narrowest pipeline the
     // panel has. These are percentages because that is how the vendor tools
@@ -116,31 +116,31 @@ done`]
         interval: 350
         onTriggered: {
             if (root._pendingBright < 0 || colorSet.running) { if (colorSet.running) colorDebounce.restart(); return }
-            colorSet.command = ["praxis-display", "color",
+            colorSet.command = ["mkos-display", "color",
                                 String(root._pendingBright), String(root._pendingSat)]
             root._pendingBright = -1; root._pendingSat = -1
             colorSet.running = true
         }
     }
     function setOledWide(on) {
-        colorSet.command = on ? ["praxis-display", "color", String(root.oledBrightPct), String(root.oledSatPct)]
-                              : ["praxis-display", "color", "off"]
+        colorSet.command = on ? ["mkos-display", "color", String(root.oledBrightPct), String(root.oledSatPct)]
+                              : ["mkos-display", "color", "off"]
         colorSet.running = true
         root.oledWide = on
     }
     Process {
         id: colorSet
-        stderr: StdioCollector { onStreamFinished: if (this.text.trim()) console.warn("praxis-display color:", this.text.trim()) }
+        stderr: StdioCollector { onStreamFinished: if (this.text.trim()) console.warn("mkos-display color:", this.text.trim()) }
         onExited: oledLater.start()
     }
     Timer { id: oledLater; interval: 900; onTriggered: root.refreshOledColor() }
 
-    // ── modes, refresh rate, scale: through praxis-display ──────────────
+    // ── modes, refresh rate, scale: through mkos-display ──────────────
     // A change applies at once and goes back by itself after 15 s unless kept
     // (Settings shows "Keep these display settings?") — a mode the monitor
     // can't show never leaves it dark. Kept changes survive a restart.
     function setMode(name, mode, scale) {
-        Quickshell.execDetached(["praxis-display", "set", name, mode].concat(scale !== undefined ? [String(scale)] : []))
+        Quickshell.execDetached(["mkos-display", "set", name, mode].concat(scale !== undefined ? [String(scale)] : []))
         pendingPoll.restart(); refreshLater.start()
     }
     function setRefresh(name, hz) {
@@ -161,13 +161,13 @@ done`]
         return [...new Set(rates)].sort((a, b) => a - b)
     }
     property var pending: ({ pending: false })
-    function keep()   { Quickshell.execDetached(["praxis-display", "keep"]); pending = { pending: false }; refreshLater.start() }
-    function revert() { Quickshell.execDetached(["praxis-display", "revert"]); pending = { pending: false }; refreshLater.start() }
+    function keep()   { Quickshell.execDetached(["mkos-display", "keep"]); pending = { pending: false }; refreshLater.start() }
+    function revert() { Quickshell.execDetached(["mkos-display", "revert"]); pending = { pending: false }; refreshLater.start() }
     property bool _sawPending: false
     property int _polls: 0
     Process {
         id: pendingProc
-        command: ["praxis-display", "status"]
+        command: ["mkos-display", "status"]
         stdout: StdioCollector {
             onStreamFinished: {
                 try { root.pending = JSON.parse(this.text) } catch (e) { return }
@@ -217,8 +217,8 @@ done`]
             "",
             "listener {",
             "    timeout = " + dimSec,
-            "    on-timeout = praxis-brightness save 15",
-            "    on-resume  = praxis-brightness restore",
+            "    on-timeout = mkos-brightness save 15",
+            "    on-resume  = mkos-brightness restore",
             "}",
             "",
             "listener {",
@@ -248,7 +248,7 @@ done`]
         // nothing. base64 has no quotes, so the text never meets the parser.
         const confText = confLines.join("\n")
         const b64 = Qt.btoa(confText)
-        const cmd = 'set -e; RUN="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/praxis"; mkdir -p "$RUN"; '
+        const cmd = 'set -e; RUN="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/mkos"; mkdir -p "$RUN"; '
                   + 'printf %s ' + b64 + ' | base64 -d > "$RUN/hypridle.conf"; '
                   + 'pkill -x hypridle 2>/dev/null || true; sleep 0.2; '
                   + 'setsid hypridle -c "$RUN/hypridle.conf" >/dev/null 2>&1 &'
@@ -268,7 +268,7 @@ done`]
     // ── Projection (Super+P) ────────────────────────────────────────────
     function setProjection(mode) {
         // mode: "pc", "duplicate", "extend", "second"
-        Quickshell.execDetached(["praxis-display", "project", mode])
+        Quickshell.execDetached(["mkos-display", "project", mode])
         refreshLater.start()
     }
 

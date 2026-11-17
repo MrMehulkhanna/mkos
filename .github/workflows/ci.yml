@@ -36,7 +36,7 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck desktop-file-utils
       - name: shellcheck
         run: |
-          shellcheck -S warning -x iso/*.sh iso/airootfs/usr/local/lib/praxis/*.sh tests/iso_checks.sh
+          shellcheck -S warning -x iso/*.sh iso/airootfs/usr/local/lib/mkos/*.sh tests/iso_checks.sh
           grep -lE '^#!.*bash' iso/airootfs/usr/local/bin/* | xargs -d '\n' shellcheck -S warning -x
       - name: ISO checks (hardware detection, installer guards, live session, branding)
         run: bash tests/iso_checks.sh

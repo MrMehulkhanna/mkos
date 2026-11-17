@@ -47,7 +47,7 @@ PUBLIC_PATHS = {"/", "/favicon.ico"}
 async def front_door(request: Request, call_next):
     if not auth.host_ok(request.headers.get("host")):
         # 421: this server does not answer for that name (blocks DNS rebinding)
-        return JSONResponse({"detail": "Praxis answers on loopback only."}, status_code=421)
+        return JSONResponse({"detail": "MKOS answers on loopback only."}, status_code=421)
     if not auth.origin_ok(request.headers.get("origin")):
         return JSONResponse({"detail": "Cross-origin requests from untrusted origins are blocked."}, status_code=403)
     cl = request.headers.get("content-length")

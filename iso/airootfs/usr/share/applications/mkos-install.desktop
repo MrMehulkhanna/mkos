@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Install MKOS Linux
+GenericName=System Installer
+Comment=Install MKOS on this computer — next to Windows, in free space, or on a whole disk
+Icon=mkos-install
+Exec=/usr/local/bin/mkos-installer
+Terminal=false
+Categories=System;
+Keywords=install;installer;setup;disk;dual boot;windows;
+StartupNotify=true

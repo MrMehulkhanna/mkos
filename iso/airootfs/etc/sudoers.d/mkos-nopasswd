@@ -1,0 +1,2 @@
+# Allow passwordless execution of MKOS system updates and time synchronization
+%wheel ALL=(ALL:ALL) NOPASSWD: /usr/local/bin/mkos-update, /usr/bin/mkos-update, /usr/local/bin/mkos-time, /usr/bin/timedatectl, /usr/bin/hwclock, /usr/local/bin/mkos-restart-shell
