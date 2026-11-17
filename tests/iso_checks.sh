@@ -177,5 +177,16 @@ if command -v pacman >/dev/null; then
     [ -z "$missing" ] && ok "every app-bundle package exists" || bad "app bundles would fail on: $missing"
 fi
 
+# ── boot safety: nothing may rewrite boot config silently ──────────────────
+# An update once left a PC in emergency mode: boot config rewritten in place
+# and rebuilt with every error hidden. These patterns must never come back.
+B="$REPO/iso/airootfs/usr/local/bin"
+check "updater never rebuilds the GRUB menu with errors hidden" \
+    bash -c "! grep -E 'grub-mkconfig[^|]*>/dev/null 2>&1 \|\| true' '$B/praxis-update'"
+check "updater never rewrites the mkinitcpio MODULES line in place" \
+    bash -c "! grep -E \"sed -i 's/\\^MODULES=\" '$B/praxis-update' '$B/praxis-install-engine'"
+check "updater verifies boot images after rebuilding" grep -q 'initramfs_ok' "$B/praxis-update"
+check "installer refuses a boot menu without root=" grep -q "refusing to finish" "$B/praxis-install-engine"
+
 printf '\n\033[1m%d passed, %d failed\033[0m\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

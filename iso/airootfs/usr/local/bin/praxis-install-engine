@@ -431,8 +431,16 @@ echo "$HOSTNAME" >/etc/hostname
 printf '127.0.0.1  localhost\n::1        localhost\n127.0.1.1  %s.localdomain  %s\n' "$HOSTNAME" "$HOSTNAME" >/etc/hosts
 
 # portable initramfs (still boots if the drive moves to another PC)
+# Storage drivers go in through a drop-in (never a sed on the MODULES line),
+# and only those this kernel has: one unknown module name fails the build.
 sed -i 's/ autodetect//' /etc/mkinitcpio.conf
-sed -i 's/^MODULES=(.*)/MODULES=(vmd nvme ahci sd_mod uas usb_storage mmc_block sdhci sdhci_pci sdhci_acpi virtio_blk virtio_scsi virtio_pci btrfs ext4)/' /etc/mkinitcpio.conf
+KV=$(ls /usr/lib/modules | sort -V | tail -1); WANT=""
+for m in vmd nvme ahci sd_mod uas usb_storage mmc_block sdhci sdhci_pci sdhci_acpi virtio_blk virtio_scsi virtio_pci btrfs ext4; do
+    modinfo -k "$KV" "$m" >/dev/null 2>&1 && WANT="$WANT $m"
+done
+install -d -m755 /etc/mkinitcpio.conf.d
+printf '# Praxis: storage drivers so the boot image finds the root disk on any PC\nMODULES+=(%s)\n' "${WANT# }" \
+    >/etc/mkinitcpio.conf.d/praxis-storage.conf
 mkinitcpio -P >/dev/null
 
 useradd -m -G wheel,video,audio,input,network,storage,users -c "$FULLNAME" -s /bin/bash "$USERNAME"
@@ -581,6 +589,11 @@ grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=Praxi
 # BootOrder, and the same check at every startup (HP/Acer firmware reorders)
 PRAXIS_NO_NVRAM=$([ "${PLAN_TEST:-}" = 1 ] && echo 1) /usr/local/bin/praxis-bootfix --install
 grub-mkconfig -o /boot/grub/grub.cfg
+# never finish an install whose boot menu cannot find the root disk
+if grep -E '^\s*linux\s' /boot/grub/grub.cfg | grep -qv 'root=' || ! grep -qE '^\s*linux\s.*root=' /boot/grub/grub.cfg; then
+    echo "boot menu has an entry without root= — refusing to finish" >&2
+    exit 1
+fi
 
 # the AI backend starts CPU-only until the user picks a model for their GPU
 if [ -f /opt/aios/config/aios.env.example ] && [ ! -f /opt/aios/config/aios.env ]; then

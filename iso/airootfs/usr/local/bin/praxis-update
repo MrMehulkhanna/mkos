@@ -667,16 +667,64 @@ for udir in /home/* "$HOME"; do
     fi
 done
 
+# ── boot safety ─────────────────────────────────────────────────────────
+# Every change to how the PC boots goes through these. An update once left
+# a PC in emergency mode: a boot config was rewritten in place and rebuilt
+# with every error hidden (">/dev/null 2>&1 || true"), so a failed rebuild
+# left an unbootable system and nobody saw why. Now each rebuild keeps the
+# previous file, checks the result, and puts the old one back if the check
+# fails — a PC is never left with a boot config that cannot find its disk.
+as_root() { if [ "$EUID" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
+safe_grub_mkconfig() {
+    [ -f /boot/grub/grub.cfg ] || return 0
+    as_root cp -a /boot/grub/grub.cfg /boot/grub/grub.cfg.praxis-prev
+    if as_root grub-mkconfig -o /boot/grub/grub.cfg.praxis-new >/tmp/praxis-grub.log 2>&1 \
+       && ! grep -E '^\s*linux\s' /boot/grub/grub.cfg.praxis-new | grep -qv 'root=' \
+       && grep -qE '^\s*linux\s.*root=' /boot/grub/grub.cfg.praxis-new; then
+        as_root mv -f /boot/grub/grub.cfg.praxis-new /boot/grub/grub.cfg
+        success "boot menu rebuilt and checked"
+    else
+        as_root rm -f /boot/grub/grub.cfg.praxis-new
+        warn "boot menu rebuild failed its check — kept the previous one (see /tmp/praxis-grub.log)"
+    fi
+}
+# the newest installed kernel: after a kernel update and before the reboot,
+# the running kernel's modules are already gone, so uname -r is the wrong one
+praxis_kver() { ls /usr/lib/modules 2>/dev/null | sort -V | tail -1; }
+initramfs_ok() {   # every image has the drivers that find the root disk
+    local img n=0 kv list built
+    kv=$(praxis_kver); built="/usr/lib/modules/$kv/modules.builtin"
+    # unified kernel images (no separate initramfs files): nothing to check here
+    ls /boot/initramfs-*.img >/dev/null 2>&1 || return 0
+    for img in /boot/initramfs-*.img; do
+        case "$img" in *fallback*) continue ;; esac
+        [ -s "$img" ] || return 1
+        list=$(lsinitcpio "$img" 2>/dev/null) || return 1
+        # a driver counts if it is in the image or built into the kernel
+        { grep -qE '/nvme(-core)?\.ko' <<<"$list" || grep -qE '/nvme(-core)?\.ko' "$built" 2>/dev/null; } || return 1
+        { grep -qE '/(btrfs|ext4)\.ko' <<<"$list" || grep -qE '/(btrfs|ext4)\.ko' "$built" 2>/dev/null; } || return 1
+        n=$((n + 1))
+    done
+    [ "$n" -gt 0 ]
+}
+safe_mkinitcpio() {
+    local img
+    for img in /boot/initramfs-*.img; do [ -f "$img" ] && as_root cp -a "$img" "$img.praxis-prev"; done
+    if as_root mkinitcpio -P >/tmp/praxis-mkinitcpio.log 2>&1 && initramfs_ok; then
+        success "boot image rebuilt and checked"
+        return 0
+    fi
+    warn "boot image rebuild failed its check — restoring the previous one (see /tmp/praxis-mkinitcpio.log)"
+    for img in /boot/initramfs-*.img.praxis-prev; do [ -f "$img" ] && as_root cp -a "$img" "${img%.praxis-prev}"; done
+    return 1
+}
+
 # Clean up any obsolete backlight kernel parameters from /etc/default/grub
 if [ -f /etc/default/grub ] && grep -q "acpi_backlight=native" /etc/default/grub; then
     log "Reverting acpi_backlight kernel option from GRUB"
-    if [ "$EUID" -eq 0 ]; then
-        sed -i 's/ *acpi_backlight=native//g' /etc/default/grub
-        grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || true
-    elif command -v sudo >/dev/null 2>&1; then
-        sudo sed -i 's/ *acpi_backlight=native//g' /etc/default/grub
-        sudo grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || true
-    fi
+    as_root cp -a /etc/default/grub /etc/default/grub.praxis-prev
+    as_root sed -i 's/ *acpi_backlight=native//g' /etc/default/grub
+    safe_grub_mkconfig
 fi
 if [ -f /usr/local/bin/praxis-backlightfix ]; then
     if [ "$EUID" -eq 0 ]; then rm -f /usr/local/bin/praxis-backlightfix
@@ -708,33 +756,39 @@ EOF
     # Keep root password hash intact; never blank root password on installed systems
 fi
 
-# Ensure storage controllers (Intel VMD, NVMe, SATA, USB SSD) are built into initramfs
-if [ -f /etc/mkinitcpio.conf ]; then
-    if ! grep -q "vmd" /etc/mkinitcpio.conf 2>/dev/null; then
-        log "Ensuring storage and VMD drivers in initramfs"
-        if [ "$EUID" -eq 0 ]; then
-            sed -i 's/^MODULES=(.*)/MODULES=(vmd nvme ahci sd_mod uas usb_storage mmc_block sdhci sdhci_pci sdhci_acpi virtio_blk virtio_scsi virtio_pci btrfs ext4)/' /etc/mkinitcpio.conf
-            sed -i 's/ autodetect//' /etc/mkinitcpio.conf
-            mkinitcpio -P >/dev/null 2>&1 || true
-        elif command -v sudo >/dev/null 2>&1; then
-            sudo sed -i 's/^MODULES=(.*)/MODULES=(vmd nvme ahci sd_mod uas usb_storage mmc_block sdhci sdhci_pci sdhci_acpi virtio_blk virtio_scsi virtio_pci btrfs ext4)/' /etc/mkinitcpio.conf
-            sudo sed -i 's/ autodetect//' /etc/mkinitcpio.conf
-            sudo mkinitcpio -P >/dev/null 2>&1 || true
-        fi
+# Storage drivers (Intel VMD, NVMe, SATA, USB, SD) in the boot image, so it
+# finds the root disk on any PC. Added through a drop-in, never by rewriting
+# /etc/mkinitcpio.conf in place (that replaced the whole MODULES line and
+# deleted autodetect with sed); modules that this kernel lacks are left out,
+# since one unknown module name fails the whole build.
+if [ -d /etc/mkinitcpio.conf.d ] || [ -f /etc/mkinitcpio.conf ]; then
+    want=""
+    for m in vmd nvme ahci sd_mod uas usb_storage mmc_block sdhci sdhci_pci sdhci_acpi btrfs ext4; do
+        modinfo -k "$(praxis_kver)" "$m" >/dev/null 2>&1 && want="$want $m"
+    done
+    new="# Praxis: storage drivers so the boot image finds the root disk on any PC
+MODULES+=(${want# })"
+    if [ "$(cat /etc/mkinitcpio.conf.d/praxis-storage.conf 2>/dev/null)" != "$new" ]; then
+        log "Making sure the boot image has the storage drivers"
+        as_root install -d -m755 /etc/mkinitcpio.conf.d
+        printf '%s\n' "$new" | as_root tee /etc/mkinitcpio.conf.d/praxis-storage.conf >/dev/null
+        safe_mkinitcpio || true
     fi
+fi
+# whatever happened above or in the package update, never finish an update
+# with a boot image that cannot find the disk
+if ls /boot/initramfs-*.img >/dev/null 2>&1 && ! initramfs_ok; then
+    log "The boot image is missing disk drivers — rebuilding it"
+    safe_mkinitcpio || warn "could not rebuild a good boot image; the previous one was kept"
 fi
 
 # Ensure GRUB includes USB root delay and emergency console force
 if [ -f /etc/default/grub ]; then
     if ! grep -q "SYSTEMD_SULOGIN_FORCE" /etc/default/grub 2>/dev/null; then
         log "Updating GRUB bootloader parameters for fail-safe rescue"
-        if [ "$EUID" -eq 0 ]; then
-            sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"|GRUB_CMDLINE_LINUX_DEFAULT="\1 rootdelay=3 systemd.setenv=SYSTEMD_SULOGIN_FORCE=1"|' /etc/default/grub
-            grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || true
-        elif command -v sudo >/dev/null 2>&1; then
-            sudo sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"|GRUB_CMDLINE_LINUX_DEFAULT="\1 rootdelay=3 systemd.setenv=SYSTEMD_SULOGIN_FORCE=1"|' /etc/default/grub
-            sudo grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || true
-        fi
+        as_root cp -a /etc/default/grub /etc/default/grub.praxis-prev
+        as_root sed -i 's|^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"|GRUB_CMDLINE_LINUX_DEFAULT="\1 rootdelay=3 systemd.setenv=SYSTEMD_SULOGIN_FORCE=1"|' /etc/default/grub
+        safe_grub_mkconfig
     fi
 fi
 
