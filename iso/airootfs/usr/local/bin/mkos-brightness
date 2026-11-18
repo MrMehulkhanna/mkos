@@ -89,6 +89,26 @@ floor=1
 for e in /sys/class/drm/card*-eDP-*/edid; do
     [ -r "$e" ] && grep -aq ATNA "$e" && floor=10      # Samsung OLED panels (sysfs sizes read 0)
 done
+# OLED in wide-colour mode (cm = "wide", 10-bit): the panel is driven
+# through a path that ignores the backlight, so the keys and slider did
+# nothing. There the picture's own brightness (sdrbrightness) is scaled
+# too, live, from the level chosen in Settings > Display > OLED colour.
+sync_wide() {
+    command -v hyprctl >/dev/null || return 0
+    local m out mode scale sat base pct
+    m=$(hyprctl -j monitors 2>/dev/null | python3 -c 'import json,sys
+for m in json.load(sys.stdin):
+    if m["name"].startswith("eDP") and m.get("colorManagementPreset") == "wide":
+        print(m["name"], "%dx%d@%.2f" % (m["width"], m["height"], m["refreshRate"]), m["scale"])' 2>/dev/null)
+    [ -n "$m" ] || return 0
+    read -r out mode scale <<<"$m"
+    local line; line=$(grep "output = \"$out\".*cm = \"wide\"" "$HOME/.config/hypr/mkos-local.lua" 2>/dev/null | tail -1)
+    base=$(sed -n 's/.*sdrbrightness = \([0-9.]*\).*/\1/p' <<<"$line"); base=${base:-1.0}
+    sat=$(sed -n 's/.*sdrsaturation = \([0-9.]*\).*/\1/p' <<<"$line"); sat=${sat:-1.0}
+    pct=$(bc1 -m | awk -F, '{gsub("%","",$4); print $4}')
+    hyprctl eval "hl.monitor({ output = \"$out\", mode = \"$mode\", position = \"auto\", scale = $scale, cm = \"wide\", bitdepth = 10, sdrbrightness = $(awk "BEGIN{printf \"%.2f\", $base * $pct / 100}"), sdrsaturation = $sat })" >/dev/null 2>&1 || true
+}
+
 case "${1:-up}" in
     # Linear, not brightnessctl's -e curve. On this 400-step panel -e put
     # 10 % at raw 0 — the screen fully off — 30 % at raw 3 and 50 % at raw 25,
@@ -98,9 +118,9 @@ case "${1:-up}" in
     #
     # Linear gives 10 % = raw 40 and 50 % = raw 200: every part of the slider
     # does something, and the floor keeps the panel visible.
-    up)      bc -n"$floor%" -q set "${step}%+" ;;
-    down)    bc -n"$floor%" -q set "${step}%-" ;;
-    set)     bc -n"$floor%" -q set "${2:?value}%" ;;
+    up)      bc -n"$floor%" -q set "${step}%+"; sync_wide ;;
+    down)    bc -n"$floor%" -q set "${step}%-"; sync_wide ;;
+    set)     bc -n"$floor%" -q set "${2:?value}%"; sync_wide ;;
     get)     bc1 -m | awk -F, '{print $4}'; exit 0 ;;
     save)    bc -q -s set "${2:-15}%" >/dev/null; exit 0 ;;          # dim (idle) and remember the level
     restore) bc -q -r; exit 0 ;;
