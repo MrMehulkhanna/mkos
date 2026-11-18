@@ -75,6 +75,12 @@ start() {
         setsid mkos-share-gate clip-listen --code "$CODE" >"$STATE/clip.log" 2>&1 &
         echo $! > "$STATE/clip.pid"
     fi
+    # remote-run: lets the paired PC set up SSH access to this one with
+    # "mkos-remote pair"; see ssh_pair_listen in mkos-share-gate
+    if ! running sshpair; then
+        setsid mkos-share-gate ssh-pair-listen --code "$CODE" >"$STATE/sshpair.log" 2>&1 &
+        echo $! > "$STATE/sshpair.pid"
+    fi
     local peers; peers=$(grep -oE '^ips = \["[^"]+"' "$LM_DIR/config.toml" 2>/dev/null | cut -d'"' -f2 | tr '\n' ' ' || true)
     if [ -n "$peers" ] && ! running clipwatch && command -v wl-paste >/dev/null; then
         # shellcheck disable=SC2086
@@ -86,7 +92,7 @@ start() {
 
 stop() {
     local p
-    for p in daemon listen clip clipwatch; do
+    for p in daemon listen clip clipwatch sshpair; do
         running "$p" && kill "$(cat "$STATE/$p.pid")" 2>/dev/null || true
         rm -f "$STATE/$p.pid"
     done

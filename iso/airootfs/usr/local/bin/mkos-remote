@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# mkos-remote — run things on the other MKOS PC, over SSH, at cable latency.
+#
+#   mkos-remote pair [HOST]    trust each other's key, both directions, once
+#   mkos-remote terminal       open a terminal on the paired PC
+#   mkos-remote run FILE       copy a script there and run it, output shown
+#   mkos-remote exec CMD...    run one command there, output shown
+#   mkos-remote forget         drop the paired PC
+#   mkos-remote status
+#
+# Pairing exchanges a dedicated keypair's public half over the same TLS-PSK
+# link screen share uses (mkos-share-gate ssh-pair); each side appends the
+# other's key to its own authorized_keys, so one command from either PC sets
+# up access both ways. Nothing more than a public key crosses the network.
+#
+# Over the direct cable this is as fast as remote execution gets — a whole
+# command round-trips in well under a millisecond; most of what you feel is
+# SSH's own connection setup, not the network.
+set -uo pipefail
+
+PEER_FILE="$HOME/.config/mkos/remote-peer"
+SSH_KEY="$HOME/.ssh/mkos_remote"
+CODE="${MKOS_SHARE_CODE:-0000}"
+
+info() { printf '\033[36m•\033[0m %s\n' "$*"; }
+ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
+die()  { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+
+peer() {   # prints "user ip host", or nothing
+    [ -s "$PEER_FILE" ] && cat "$PEER_FILE"
+}
+
+# the PC paired for mouse & keyboard sharing already has a known IP;
+# reuse it so "pair" needs no argument once that is set up
+guess_host() {
+    grep -oE '^ips = \["[^"]+"' "$HOME/.config/lan-mouse/config.toml" 2>/dev/null | head -1 | cut -d'"' -f2
+}
+
+ssh_opts=(-i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new)
+
+case "${1:-status}" in
+    pair)
+        host=${2:-$(guess_host)}
+        [ -n "$host" ] || die "no PC to pair with — give an address: mkos-remote pair 169.254.x.x"
+        mkos-share-gate ssh-pair --host "$host" --code "$CODE"
+        ;;
+    forget)
+        rm -f "$PEER_FILE"; ok "forgot the paired PC" ;;
+    status)
+        read -r user ip host <<<"$(peer)"
+        if [ -n "${ip:-}" ]; then
+            ok "paired: $user@$host ($ip)"
+            ssh "${ssh_opts[@]}" -o ConnectTimeout=2 "$user@$ip" true 2>/dev/null \
+                && echo "  reachable now" || echo "  not reachable right now"
+        else
+            info "no PC paired yet — run: mkos-remote pair"
+        fi ;;
+    terminal)
+        read -r user ip host <<<"$(peer)"
+        [ -n "${ip:-}" ] || die "no PC paired yet — run: mkos-remote pair"
+        exec kitty --class mkos-remote --title "$host — remote terminal" -e ssh "${ssh_opts[@]}" "$user@$ip" ;;
+    exec)
+        shift
+        read -r user ip host <<<"$(peer)"
+        [ -n "${ip:-}" ] || die "no PC paired yet — run: mkos-remote pair"
+        [ $# -ge 1 ] || die "usage: mkos-remote exec COMMAND..."
+        ssh "${ssh_opts[@]}" "$user@$ip" -- "$@" ;;
+    run)
+        file=${2:-}
+        [ -n "$file" ] && [ -f "$file" ] || die "usage: mkos-remote run FILE"
+        read -r user ip host <<<"$(peer)"
+        [ -n "${ip:-}" ] || die "no PC paired yet — run: mkos-remote pair"
+        remote=/tmp/mkos-remote-run-$$-$(basename "$file")
+        info "sending $file to $host and running it there"
+        scp -q "${ssh_opts[@]}" "$file" "$user@$ip:$remote" || die "could not send the file"
+        kitty --class mkos-remote --title "$host — $file" -e bash -c "
+            ssh ${ssh_opts[*]} '$user@$ip' 'chmod +x \"$remote\"; \"$remote\"; rc=\$?; rm -f \"$remote\"; exit \$rc'
+            echo; echo \"(exit code \$?)\"
+            read -rp 'Press Enter to close… ' _" ;;
+    *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

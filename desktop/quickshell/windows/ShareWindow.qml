@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Hyprland
+import Quickshell.Io
 import "root:/Config"
 import "root:/Services"
 import "root:/components"
@@ -707,6 +708,92 @@ OverlayWindow {
                     Btn { visible: !!Share.mousePeers.right; icon: "x"; label: "Forget right"; onClicked: Share.mouseForget("right") }
                     Btn { visible: !!Share.mousePeers.top; icon: "x"; label: "Forget above"; onClicked: Share.mouseForget("top") }
                     Btn { visible: !!Share.mousePeers.bottom; icon: "x"; label: "Forget below"; onClicked: Share.mouseForget("bottom") }
+                }
+            }
+
+            // ── remote-run: run things on the paired PC over SSH ──────────
+            // One keypair exchange, both directions, over the same TLS-PSK
+            // link; after that this is as fast as remote execution gets —
+            // a command round-trips in well under 1 ms over the cable.
+            Column {
+                width: parent.width; spacing: Theme.spaceMd
+                Text {
+                    text: "REMOTE RUN  ·  run things on the paired PC"
+                    color: Theme.muted
+                    font.family: Theme.font; font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold
+                    font.letterSpacing: 1.2
+                }
+                Text {
+                    width: parent.width; wrapMode: Text.WordWrap
+                    text: "Set up access once (uses the PC paired above, or type its address), then open a terminal there or run a file there — output shown in a window."
+                    color: Theme.text2
+                    font.family: Theme.font; font.pixelSize: Theme.fontSm
+                }
+                Process {
+                    id: remoteStatus
+                    command: ["mkos-remote", "status"]
+                    stdout: StdioCollector { id: remoteStatusOut }
+                    onExited: remoteLabel.text = (remoteStatusOut.text || "").trim() || "no PC paired yet"
+                }
+                Component.onCompleted: remoteStatus.running = true
+                Text {
+                    id: remoteLabel
+                    width: parent.width; wrapMode: Text.WordWrap
+                    text: "checking…"
+                    color: Theme.text2; font.family: Theme.font; font.pixelSize: Theme.fontSm
+                }
+                Row {
+                    spacing: Theme.spaceSm
+                    TextInput {
+                        id: remoteAddr
+                        width: 170; height: 30
+                        color: Theme.text; font.family: Theme.fontMono; font.pixelSize: Theme.fontSm
+                        clip: true; verticalAlignment: TextInput.AlignVCenter
+                        Rectangle { anchors.fill: parent; z: -1; radius: 6; color: Theme.alpha(Theme.text, 0.06); border.width: 1; border.color: Theme.border }
+                        Text {
+                            anchors.fill: parent; leftPadding: 8; verticalAlignment: Text.AlignVCenter
+                            visible: !remoteAddr.text && !remoteAddr.activeFocus
+                            text: "address (optional)"; color: Theme.muted
+                            font.family: Theme.fontMono; font.pixelSize: Theme.fontSm
+                        }
+                    }
+                    Btn {
+                        icon: "key"; label: "Set up access"
+                        onClicked: {
+                            remoteProc.command = remoteAddr.text.trim()
+                                ? ["mkos-remote", "pair", remoteAddr.text.trim()] : ["mkos-remote", "pair"]
+                            remoteProc.running = true
+                        }
+                    }
+                }
+                Process {
+                    id: remoteProc
+                    stdout: StdioCollector { id: remoteProcOut }
+                    stderr: StdioCollector { id: remoteProcErr }
+                    onExited: (code) => {
+                        remoteLabel.text = code === 0
+                            ? (remoteProcOut.text || "").trim()
+                            : ((remoteProcErr.text || "").trim() || "could not pair")
+                        remoteStatus.running = true
+                    }
+                }
+                Row {
+                    spacing: Theme.spaceSm
+                    Btn { icon: "terminal"; label: "Open terminal there"; onClicked: Quickshell.execDetached(["mkos-remote", "terminal"]) }
+                    Btn {
+                        icon: "paperclip"; label: "Run a file there…"
+                        onClicked: filePickProc.running = true
+                    }
+                    Btn { icon: "x"; label: "Forget"; onClicked: { Quickshell.execDetached(["mkos-remote", "forget"]); remoteStatus.running = true } }
+                }
+                Process {
+                    id: filePickProc
+                    command: ["zenity", "--file-selection", "--title=Run which file on the paired PC?"]
+                    stdout: StdioCollector { id: filePickOut }
+                    onExited: (code) => {
+                        const f = (filePickOut.text || "").trim()
+                        if (code === 0 && f) Quickshell.execDetached(["mkos-remote", "run", f])
+                    }
                 }
             }
 

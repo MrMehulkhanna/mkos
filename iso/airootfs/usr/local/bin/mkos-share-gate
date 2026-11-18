@@ -900,6 +900,97 @@ def cursor_recv() -> int:
             sys.stdout.flush()
 
 
+# ── remote run: bidirectional SSH trust between two MKOS PCs ────────────
+# Exchanges a dedicated keypair's public half over the same TLS-PSK link as
+# everything else, each side appending the other's key to its own
+# authorized_keys — one command, run from either PC, sets up SSH access in
+# BOTH directions. Nothing is sent that is not already meant to be shared:
+# a public key proves nothing on its own without the matching private half,
+# which never leaves the machine that made it.
+SSH_PAIR_PORT = 5925
+SSH_KEY = os.path.expanduser("~/.ssh/mkos_remote")
+REMOTE_PEER_FILE = os.path.expanduser("~/.config/mkos/remote-peer")
+
+
+def _ensure_remote_key() -> str:
+    if not os.path.exists(SSH_KEY):
+        os.makedirs(os.path.dirname(SSH_KEY), exist_ok=True)
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "mkos-remote", "-f", SSH_KEY], check=True)
+    return open(SSH_KEY + ".pub").read().strip()
+
+
+def _trust(pubkey: str) -> None:
+    line = pubkey.strip()
+    if not re.fullmatch(r"ssh-\w+ [A-Za-z0-9+/=]+( .*)?", line):
+        raise ValueError("not a public key")
+    ak = os.path.expanduser("~/.ssh/authorized_keys")
+    os.makedirs(os.path.dirname(ak), exist_ok=True, mode=0o700)
+    have = open(ak).read().splitlines() if os.path.exists(ak) else []
+    if line not in have:
+        with open(ak, "a") as f:
+            f.write(line + "\n")
+    os.chmod(ak, 0o600)
+    os.chmod(os.path.dirname(ak), 0o700)
+    # best-effort: sshd is part of the system but not enabled by default
+    subprocess.run(["sudo", "-n", "systemctl", "enable", "--now", "sshd"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def _save_peer(user: str, ip: str, host: str) -> None:
+    os.makedirs(os.path.dirname(REMOTE_PEER_FILE), exist_ok=True)
+    open(REMOTE_PEER_FILE, "w").write(f"{user} {ip} {host}\n")
+
+
+def ssh_pair_listen(code: str) -> int:
+    ctx = _tls_ctx(True, code)
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", SSH_PAIR_PORT))
+    srv.listen(4)
+    print(f"ssh-pair: listening on {SSH_PAIR_PORT}", flush=True)
+    while True:
+        raw, addr = srv.accept()
+        try:
+            raw.settimeout(10)
+            tls = ctx.wrap_socket(raw, server_side=True)
+            hdr = b""
+            while not hdr.endswith(b"\n") and len(hdr) < 8192:
+                hdr += tls.recv(1)
+            req = json.loads(hdr)
+            _trust(req["pubkey"])
+            _save_peer(req.get("user", "?"), addr[0], req.get("host", addr[0]))
+            resp = {"pubkey": _ensure_remote_key(), "user": os.environ.get("USER") or os.environ.get("LOGNAME", "?"),
+                    "host": socket.gethostname() or addr[0]}
+            tls.sendall((json.dumps(resp) + "\n").encode())
+            print(f"ssh-pair: trusted {req.get('user')}@{addr[0]} both ways", flush=True)
+        except (OSError, ssl.SSLError, ValueError, KeyError, json.JSONDecodeError) as e:
+            print(f"ssh-pair: refused {addr[0]} ({e})", flush=True)
+        finally:
+            raw.close()
+
+
+def ssh_pair(host: str, code: str) -> int:
+    pub = _ensure_remote_key()
+    try:
+        tls = _tls_ctx(False, code).wrap_socket(socket.create_connection((host, SSH_PAIR_PORT), timeout=8),
+                                                 server_hostname=None)
+    except ssl.SSLError:
+        print("mkos-remote: the code was not accepted", file=sys.stderr); return 4
+    except OSError as e:
+        print(f"mkos-remote: cannot reach {host} ({e}) — is the other PC on and sharing?", file=sys.stderr); return 3
+    req = {"pubkey": pub, "user": os.environ.get("USER") or os.environ.get("LOGNAME", "?"),
+           "host": socket.gethostname() or ""}
+    tls.sendall((json.dumps(req) + "\n").encode())
+    hdr = b""
+    while not hdr.endswith(b"\n") and len(hdr) < 8192:
+        hdr += tls.recv(1)
+    resp = json.loads(hdr)
+    _trust(resp["pubkey"])
+    _save_peer(resp.get("user", "?"), host, resp.get("host", host))
+    print(f"paired with {resp.get('user')}@{resp.get('host', host)} ({host}) — SSH access both ways")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(add_help=True)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -934,6 +1025,11 @@ def main(argv: list[str]) -> int:
     sub.add_parser("cursor-recv")
     pp = sub.add_parser("pointer-png")
     pp.add_argument("dest")
+    sl = sub.add_parser("ssh-pair-listen")
+    sl.add_argument("--code", required=True)
+    sp = sub.add_parser("ssh-pair")
+    sp.add_argument("--host", required=True)
+    sp.add_argument("--code", required=True)
     sub.add_parser("newcode")
     sub.add_parser("scan")
     a = ap.parse_args(argv)
@@ -948,6 +1044,10 @@ def main(argv: list[str]) -> int:
         return cursor_recv()
     if a.cmd == "pointer-png":
         print(pointer_png(a.dest)); return 0
+    if a.cmd == "ssh-pair-listen":
+        return ssh_pair_listen(a.code)
+    if a.cmd == "ssh-pair":
+        return ssh_pair(a.host, a.code)
     if a.cmd == "clip-listen":
         return clip_listen(a.code)
     if a.cmd == "clip-send":
