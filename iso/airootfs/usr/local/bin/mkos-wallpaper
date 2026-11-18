@@ -121,6 +121,38 @@ show_still() {
     fi
 }
 
+# A screen shared/extended to another PC gets no live wallpaper (see below),
+# but it should not just be solid black either — that is what the other PC's
+# user actually sees before any window is moved there. A second, independent
+# hyprpaper instance paints a still picture on it, costing nothing (one
+# decoded frame, no video), and never touches the real screens mpvpaper owns.
+HEADLESS_CONF="${XDG_CACHE_HOME:-$HOME/.cache}/mkos-wallpaper/headless.conf"
+paint_headless_still() {
+    local outs pic
+    outs=$(hyprctl -j monitors 2>/dev/null | python3 -c 'import json,sys
+print(" ".join(m["name"] for m in json.load(sys.stdin) if m["name"].startswith("HEADLESS")))' 2>/dev/null)
+    mkdir -p "${HEADLESS_CONF%/*}"
+    if [ -z "$outs" ]; then
+        pkill -f "hyprpaper --config $HEADLESS_CONF" 2>/dev/null
+        rm -f "$HEADLESS_CONF"
+        return 0
+    fi
+    load_state
+    pic=$still; [ -f "$pic" ] || pic=$(default_still)
+    [ -n "$pic" ] || return 0
+    {
+        echo "splash = false"
+        echo "ipc = false"
+        for o in $outs; do
+            echo "preload = $pic"
+            echo "wallpaper = $o,$pic"
+        done
+    } > "$HEADLESS_CONF"
+    pkill -f "hyprpaper --config $HEADLESS_CONF" 2>/dev/null
+    sleep 0.1
+    setsid -f hyprpaper --config "$HEADLESS_CONF" >/dev/null 2>&1
+}
+
 # ── live: one mpvpaper per monitor ─────────────────────────────────────────
 has_layer() {    # <monitor> <namespace>
     hyprctl -j layers 2>/dev/null |
@@ -144,6 +176,7 @@ print(" ".join(m["name"] for m in json.load(sys.stdin) if not m["name"].startswi
     else
         for o in $outs; do setsid -f "${MPV_ENV[@]}" mpvpaper -p -o "$MPV_OPTS" "$o" "$1" >/dev/null 2>&1; done
     fi
+    paint_headless_still
     return 0
 }
 
@@ -189,6 +222,7 @@ cmd_suspend() {
 
 cmd_restore() {
     load_state
+    paint_headless_still
     if [ "$mode" = live ] && [ -f "$live" ] && command -v mpvpaper >/dev/null && playable "$live"; then
         show_live "$live" "$([ "${1:-}" = --force ] && echo force)"
         return
