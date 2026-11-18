@@ -47,6 +47,18 @@ die() { printf '\n\033[1;31m!! %s\033[0m\n' "$*" >&2; exit 1; }
 git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || die "$REPO is not a git checkout"
 mkdir -p "$BUILD" "$OUT"
 
+# One build at a time. Without this, a second build.sh sharing the same
+# $WORK (e.g. a background run from an earlier session that was never
+# confirmed finished, plus a fresh one started not knowing that) raced on
+# wipe(): one run deleted $WORK out from under the other mid-squashfs, and
+# the victim failed later with a baffling "No such file or directory" from
+# mkarchiso with no real cause in sight. Refuse cleanly instead.
+BUILD_LOCK=$BUILD/build.lock
+exec 9>"$BUILD_LOCK"
+if ! flock -n 9; then
+    die "another MKOS ISO build is already running (lock: $BUILD_LOCK) — wait for it to finish. If you are sure none is running, delete that file and try again."
+fi
+
 # ----------------------------------------------------------------------------
 log "1/6  archiso"
 command -v mkarchiso >/dev/null || sudo pacman -S --needed --noconfirm archiso

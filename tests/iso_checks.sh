@@ -177,6 +177,10 @@ if command -v pacman >/dev/null; then
     [ -z "$missing" ] && ok "every app-bundle package exists" || bad "app bundles would fail on: $missing"
 fi
 
+# ── build safety: only one ISO build at a time ──────────────────────────────
+check "the ISO builder refuses to run twice at once (flock)" \
+    grep -q 'flock -n 9' "$REPO/iso/build.sh"
+
 # ── boot safety: nothing may rewrite boot config silently ──────────────────
 # An update once left a PC in emergency mode: boot config rewritten in place
 # and rebuilt with every error hidden. These patterns must never come back.
