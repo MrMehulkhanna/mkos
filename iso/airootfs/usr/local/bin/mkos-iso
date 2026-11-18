@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# mkos-iso — build the MKOS ISO and write it to a USB drive or SSD, safely.
+#
+#   mkos-iso                 the window: pick a drive, build if needed, flash
+#   mkos-iso build           build a fresh ISO from the latest code
+#   mkos-iso latest          print the path of the newest ISO
+#   mkos-iso drives          list drives that can be written (USB only)
+#   mkos-iso flash /dev/sdX  write the newest ISO to that drive and verify it
+#
+# Safety: only USB drives are offered or accepted, never the disk this PC is
+# running from; the ISO's checksum is checked before writing, and after
+# writing the drive is compared to the ISO byte for byte. In the window the
+# drive must be confirmed by name and size before anything is erased.
+set -Eeuo pipefail
+
+OUT="${MKOS_ISO_OUT:-$HOME/.cache/mkos-iso/out}"
+REPO="${MKOS_REPO:-$HOME/aios}"
+info() { printf '\033[36m•\033[0m %s\n' "$*"; }
+ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
+die()  { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+
+latest() { ls -t "$OUT"/mkos-*.iso 2>/dev/null | head -1; }
+
+# the disk holding / (never writable)
+system_disk() {
+    local src; src=$(findmnt -no SOURCE / | sed 's/\[.*//')
+    lsblk -nrpo PKNAME "$src" 2>/dev/null | head -1
+}
+
+# USB disks only: "DEV<TAB>SIZE<TAB>MODEL"
+drives() {
+    local sys; sys=$(system_disk)
+    lsblk -dnrpo NAME,TRAN,SIZE,MODEL | while read -r dev tran size model; do
+        [ "$tran" = usb ] || continue
+        [ "$dev" = "$sys" ] && continue
+        [ "$size" = 0B ] && continue                      # empty card reader slot
+        printf '%s\t%s\t%s\n' "$dev" "$size" "${model//\\x20/ }"
+    done
+}
+
+build() {
+    [ -d "$REPO/.git" ] || die "the MKOS source is not at $REPO"
+    info "getting the latest code"
+    git -C "$REPO" pull --ff-only -q || info "could not update the code — building what is here"
+    info "building the ISO (about 20–30 minutes)"
+    bash "$REPO/iso/build.sh"
+    [ -n "$(latest)" ] || die "the build finished but no ISO was found in $OUT"
+    ok "built: $(latest)"
+}
+
+flash() {
+    local dev=${1:?drive} iso size
+    iso=$(latest); [ -n "$iso" ] || die "no ISO yet — run: mkos-iso build"
+    drives | cut -f1 | grep -qx "$dev" || die "$dev is not a USB drive this can write (see: mkos-iso drives)"
+    ( cd "${iso%/*}" && sha256sum -c "${iso##*/}.sha256" >/dev/null ) || die "the ISO failed its checksum — rebuild it"
+    size=$(stat -c %s "$iso")
+    [ "$(lsblk -bdno SIZE "$dev")" -ge "$size" ] || die "$dev is smaller than the ISO"
+    info "writing ${iso##*/} to $dev"
+    for p in $(lsblk -nrpo NAME "$dev" | tail -n +2); do sudo umount "$p" 2>/dev/null || true; done
+    sudo dd if="$iso" of="$dev" bs=4M conv=fsync oflag=direct status=progress
+    sync
+    info "checking the drive against the ISO"
+    sudo cmp -n "$size" "$iso" "$dev" || die "the drive does not match the ISO — try again or use another drive"
+    ok "done: $dev holds ${iso##*/}, verified byte for byte"
+}
+
+window() {
+    command -v zenity >/dev/null || die "zenity is missing"
+    local iso list dev choice
+    iso=$(latest)
+    if [ -z "$iso" ] || zenity --question --title "MKOS ISO" --width 420 \
+            --text "Newest ISO: ${iso:+${iso##*/}}${iso:-none yet}\n\nBuild a fresh one from the latest code first? (20–30 minutes)" ; then
+        kitty --class mkos-iso --title "Building the MKOS ISO" -e bash -c "mkos-iso build; echo; read -rp 'Press Enter to close… ' _"
+        iso=$(latest); [ -n "$iso" ] || { zenity --error --text "The build did not produce an ISO."; exit 1; }
+    fi
+    list=$(drives)
+    [ -n "$list" ] || { zenity --error --width 360 --text "No USB drive or SSD found. Plug one in and try again."; exit 1; }
+    choice=$(printf '%s\n' "$list" | awk -F'\t' '{print $1; print $2; print $3}' |
+        zenity --list --title "Write ${iso##*/}" --width 520 --height 300 \
+            --text "Pick the drive to write. EVERYTHING on it will be erased." \
+            --column Drive --column Size --column Name) || exit 0
+    dev=$choice; [ -n "$dev" ] || exit 0
+    zenity --question --title "Erase $dev?" --width 420 \
+        --text "Erase everything on:\n\n<b>$(printf '%s\n' "$list" | awk -F'\t' -v d="$dev" '$1==d{print $1"  —  "$3"  ("$2")"}')</b>\n\nand write ${iso##*/}?" || exit 0
+    kitty --class mkos-iso --title "Writing the MKOS ISO" -e bash -c "mkos-iso flash $dev; echo; read -rp 'Press Enter to close… ' _"
+}
+
+case "${1:-window}" in
+    window) window ;;
+    build)  build ;;
+    latest) latest ;;
+    drives) drives ;;
+    flash)  shift; flash "$@" ;;
+    *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

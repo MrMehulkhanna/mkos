@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=MKOS ISO Writer
+Comment=Build the latest MKOS ISO and write it to a USB drive or SSD
+Exec=mkos-iso
+Icon=media-removable
+Terminal=false
+Categories=System;Utility;
