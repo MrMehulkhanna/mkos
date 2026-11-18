@@ -30,6 +30,47 @@ OverlayWindow {
     // stops a task completely: SIGTERM, then SIGKILL for whatever ignores it.
     property string activeView: "events"
     property var topList: []
+    // sub-processes under a row, shown nested when expanded — "kids" on a row
+    // is just a count; expanding fetches the real pid/name/cpu/mem for each
+    property var expandedPids: ({})          // {pid: true}
+    property var childrenOf: ({})            // {pid: [row, row, ...]}
+    property var displayList: []             // topList with expansions flattened in, each tagged with depth
+    function rebuildDisplay() {
+        const out = []
+        const add = (rows, depth) => {
+            for (const r of rows) {
+                out.push(Object.assign({}, r, { depth }))
+                if (win.expandedPids[r.pid] && win.childrenOf[r.pid]) add(win.childrenOf[r.pid], depth + 1)
+            }
+        }
+        add(win.topList, 0)
+        win.displayList = out
+    }
+    onTopListChanged: rebuildDisplay()
+    function toggleExpand(pid) {
+        if (win.expandedPids[pid]) {
+            const e = Object.assign({}, win.expandedPids); delete e[pid]; win.expandedPids = e
+            rebuildDisplay()
+            return
+        }
+        childrenProc.pid_ = pid
+        childrenProc.command = ["mkos-top", "children", String(pid)]
+        childrenProc.running = true
+    }
+    Process {
+        id: childrenProc
+        property int pid_: -1
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const d = JSON.parse(this.text)
+                    const c = Object.assign({}, win.childrenOf); c[d.pid] = d.children; win.childrenOf = c
+                    const e = Object.assign({}, win.expandedPids); e[d.pid] = true; win.expandedPids = e
+                } catch (err) {}
+                win.rebuildDisplay()
+            }
+        }
+    }
     property string topNote: ""
     onActiveViewChanged: { topList = []; topNote = ""; if (activeView !== "events" && !psProc.running) psProc.running = true }
     Process {
@@ -39,6 +80,9 @@ OverlayWindow {
             onStreamFinished: {
                 if (win.activeView === "events") return
                 try { const d = JSON.parse(this.text); if (d.view === win.activeView) { win.topList = d.procs; win.topNote = d.note || "" } } catch (e) {}
+                for (const pid in win.expandedPids) {
+                    childrenProc.pid_ = Number(pid); childrenProc.command = ["mkos-top", "children", pid]; childrenProc.running = true
+                }
             }
         }
     }
@@ -143,7 +187,7 @@ OverlayWindow {
         anchors.bottomMargin: Theme.dockIcon + 16 + Theme.dockMargin + 12
         anchors.rightMargin: win.open ? Theme.barMargin : -(width + 24)
         Behavior on anchors.rightMargin { NumberAnimation { duration: Theme.slow; easing.type: Theme.easeMove } }
-        width: 520
+        width: 900
         radius: Theme.radiusXl
         color: Theme.glassStrong
         MouseArea { anchors.fill: parent }
@@ -275,11 +319,11 @@ OverlayWindow {
             id: topView
             visible: win.activeView !== "events"
             anchors { top: stats.bottom; left: parent.left; right: parent.right; bottom: footer.top; margins: 14; topMargin: 10; bottomMargin: 8 }
-            model: win.topList
+            model: win.displayList
             spacing: 2
             clip: true
             readonly property bool gpuView: win.activeView === "gpu"
-            readonly property int nameW: width - 46 - 52 - 60 - 34 - 4 * 8
+            readonly property int nameW: width - 46 - 52 - 60 - 34 - 24 - 5 * 8
             delegate: Item {
                 id: row
                 required property var modelData
@@ -294,8 +338,18 @@ OverlayWindow {
                 MouseArea { id: hover; anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.NoButton }
 
                 Row {
-                    anchors { left: parent.left; leftMargin: 4; verticalCenter: parent.verticalCenter }
+                    anchors { left: parent.left; leftMargin: 4 + row.modelData.depth * 16; verticalCenter: parent.verticalCenter }
                     spacing: 8
+                    // expand/collapse: only on rows with real sub-processes (kids > 0);
+                    // a thin placeholder keeps leaf rows aligned with their siblings
+                    IconButton {
+                        visible: row.modelData.kids > 0
+                        implicitWidth: 16; implicitHeight: 16; anchors.verticalCenter: parent.verticalCenter
+                        icon: win.expandedPids[row.modelData.pid] ? "chevron-down" : "chevron-right"
+                        iconSize: 9; iconColor: Theme.muted
+                        onClicked: win.toggleExpand(row.modelData.pid)
+                    }
+                    Item { visible: row.modelData.kids === 0; width: 16; height: 1 }
                     Text { text: row.modelData.pid; color: Theme.muted; font.family: Theme.fontMono; font.pixelSize: 10; width: 46; anchors.verticalCenter: parent.verticalCenter }
                     Text {
                         width: 52; anchors.verticalCenter: parent.verticalCenter
@@ -313,7 +367,7 @@ OverlayWindow {
                         color: Theme.text2; font.family: Theme.fontMono; font.pixelSize: 10
                     }
                     Text {
-                        width: topView.nameW; anchors.verticalCenter: parent.verticalCenter
+                        width: topView.nameW - row.modelData.depth * 16; anchors.verticalCenter: parent.verticalCenter
                         text: row.stopping ? "stopping " + row.modelData.name + "…"
                             : row.armed ? "Stop " + row.modelData.name + (row.modelData.kids ? " and " + row.modelData.kids + " child process" + (row.modelData.kids > 1 ? "es" : "") : "") + "?"
                             : row.modelData.name
@@ -341,7 +395,7 @@ OverlayWindow {
             }
             header: Item { width: topView.width; height: 26
                 Row {
-                    anchors { left: parent.left; leftMargin: 4; verticalCenter: parent.verticalCenter }
+                    anchors { left: parent.left; leftMargin: 4 + 24; verticalCenter: parent.verticalCenter }
                     spacing: 8
                     Text { text: "PID"; color: Theme.muted; font.family: Theme.fontMono; font.pixelSize: 10; width: 46; font.weight: Font.Bold }
                     Text { text: topView.gpuView ? "GPU" : "CPU"; color: Theme.muted; font.family: Theme.fontMono; font.pixelSize: 10; width: 52; font.weight: Font.Bold }

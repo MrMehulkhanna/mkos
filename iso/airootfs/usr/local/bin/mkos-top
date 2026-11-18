@@ -2,6 +2,8 @@
 """mkos-top — what is using the CPU, memory and GPU right now, and stop it.
 
     mkos-top [cpu|mem|gpu] [N]    JSON: the top N processes (default: cpu, 14)
+    mkos-top children PID         JSON: every direct child of PID, measured the same way —
+                                   for expanding a row that has sub-processes
     mkos-top stop PID             stop PID and every process it started:
                                     SIGTERM first, SIGKILL for whatever is left after 3 s
 
@@ -316,7 +318,50 @@ def stop(pid):
     return {"ok": True, "name": name, "msg": f"Stopped {name}{extra}{how}."}
 
 
+def row_of(pid, p, cpu, drm, nv, kids):
+    name, cmd = describe(pid, p["comm"])
+    busy = max(drm.get(pid, 0.0), nv.get(pid, (0.0, 0.0))[0])
+    return {"pid": pid, "name": name, "cmd": cmd, "cpu": round(cpu.get(pid, 0.0), 1),
+            "mem_mb": round(p["rss"] / (1 << 20)), "gpu": round(busy, 1),
+            "vram_mb": round(nv.get(pid, (0.0, 0.0))[1]), "user": user_name(p["uid"]),
+            "own": p["uid"] == ME, "protected": protected(pid, p["comm"]),
+            "kids": len(descendants(pid, kids))}
+
+
+def children(pid):
+    """Every direct child of pid, measured the same way as the main list, so
+    a row with children can be expanded in place instead of only showing a
+    count. One short CPU sample — cheap, since this is only called for one
+    branch of the tree at a time, on demand."""
+    t0 = time.monotonic()
+    procs = snapshot()
+    cpu0 = {p: v["ticks"] for p, v in procs.items()}
+    time.sleep(0.2)
+    procs2 = snapshot()
+    dt = max(time.monotonic() - t0, 1e-3)
+    cpu = {p: 100.0 * (v["ticks"] - cpu0.get(p, v["ticks"])) / CLK / dt for p, v in procs2.items()}
+    drm_c, vram = drm_clients(procs2)
+    busy = drm_busy({}, drm_c, dt)         # no previous sample yet this call: instantaneous only
+    awake, nv = nvidia()
+    kids = children_map(procs2)
+    out = []
+    for pid2 in kids.get(pid, []):
+        if pid2 not in procs2:
+            continue
+        p2 = procs2[pid2]
+        r = row_of(pid2, p2, cpu, busy, nv, kids)
+        r["vram_mb"] = r["vram_mb"] or round(vram.get(pid2, 0) / (1 << 20))
+        out.append(r)
+    out.sort(key=lambda r: (r["cpu"], r["mem_mb"]), reverse=True)
+    return {"pid": pid, "children": out}
+
+
 def main(argv):
+    if argv and argv[0] == "children":
+        if len(argv) < 2 or not argv[1].isdigit():
+            sys.exit("usage: mkos-top children PID")
+        print(json.dumps(children(int(argv[1]))))
+        return 0
     if argv and argv[0] == "stop":
         if len(argv) < 2 or not argv[1].isdigit():
             sys.exit("usage: mkos-top stop PID")
