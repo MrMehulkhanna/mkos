@@ -48,6 +48,7 @@ mark_restart_if_needed() {   # before after
 success() { echo -e "\033[1;32m  ✓ $*\033[0m"; }
 info() { echo -e "\033[1;34m  → $*\033[0m"; }
 warn() { echo -e "\033[1;33m  ! $*\033[0m"; }
+as_root() { if [ "$EUID" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
 # ── one at a time ───────────────────────────────────────────────────────
 # Two updates running together deadlock on pacman's database lock and sit
 # there with no error, which from a GUI looks exactly like a hung update.
@@ -633,6 +634,16 @@ fi
 # 5c. Voice typing & speech recognition (faster-whisper)
 # ---------------------------------------------------------------------------
 log "Checking voice typing speech recognition"
+# the shared engine voice typing uses for every user (/opt/aios/.venv);
+# installs that missed it at install time get it here
+if [ -d /opt/aios ] && ! /opt/aios/.venv/bin/python3 -c "import faster_whisper" 2>/dev/null; then
+    as_root python -m venv /opt/aios/.venv 2>/dev/null || true
+    if as_root /opt/aios/.venv/bin/pip install --quiet --disable-pip-version-check faster-whisper; then
+        as_root chmod -R a+rX /opt/aios/.venv; success "voice typing engine installed"
+    else
+        warn "could not install the voice typing engine (no internet?) — the next update will try again"
+    fi
+fi
 # Voice typing needs the local AI backend, and that was only ever installed
 # if the user clicked "Set up the AI" on first boot. Skip it once and voice
 # typing never worked — and this step could not help, because it only
@@ -674,7 +685,6 @@ done
 # left an unbootable system and nobody saw why. Now each rebuild keeps the
 # previous file, checks the result, and puts the old one back if the check
 # fails — a PC is never left with a boot config that cannot find its disk.
-as_root() { if [ "$EUID" -eq 0 ]; then "$@"; else sudo "$@"; fi; }
 safe_grub_mkconfig() {
     [ -f /boot/grub/grub.cfg ] || return 0
     as_root cp -a /boot/grub/grub.cfg /boot/grub/grub.cfg.mkos-prev

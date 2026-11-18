@@ -375,11 +375,30 @@ parse_pacstrap() {
         fi
     done
 }
-PACSTRAP=(pacstrap -K)
+# Several GB come from the internet here. One dropped connection used to fail
+# the whole install and leave a half-filled partition with no boot entry
+# (seen on campus Wi-Fi). Now it tries up to 6 times: packages already
+# downloaded stay in the new system's cache, so each try resumes rather
+# than starting over, and the mirror list is refreshed in between.
+PACSTRAP=(pacstrap)
 [ "$PLAN_TEST" = 1 ] && [ "$HOST_CACHE" = 1 ] && PACSTRAP+=(-c)      # tests: reuse the host's package cache
-if ! "${PACSTRAP[@]}" "$MNT" --noprogressbar "${PKGS[@]}" 2>&1 | parse_pacstrap; then
-    fail "installing the packages failed — check the internet connection (details: $LOG)"
-fi
+ok_pkgs=0
+for attempt in 1 2 3 4 5 6; do
+    keyring=(); [ "$attempt" = 1 ] && keyring=(-K)    # the keyring is set up once
+    if "${PACSTRAP[@]}" "${keyring[@]}" "$MNT" --noprogressbar "${PKGS[@]}" 2>&1 | parse_pacstrap \
+       && [ "${PIPESTATUS[0]}" = 0 ]; then
+        ok_pkgs=1; break
+    fi
+    echo "!! package download attempt $attempt of 6 failed — retrying"
+    progress 12 "Connection dropped — retrying the download ($attempt/6)"
+    sleep $((attempt * 5))
+    rm -f "$MNT/var/lib/pacman/db.lck"     # a try that died mid-install leaves this behind
+    if [ "$PLAN_TEST" != 1 ] && command -v reflector >/dev/null 2>&1; then
+        reflector --latest 10 --protocol https --sort rate --save /etc/pacman.d/mirrorlist >/dev/null 2>&1 || true
+    fi
+    pacman -Sy --noconfirm >/dev/null 2>&1 || true
+done
+[ "$ok_pkgs" = 1 ] || fail "installing the packages failed after 6 tries — check the internet connection, then run the installer again; packages already downloaded are kept (details: $LOG)"
 STEP="configuring"
 
 step 76 "Writing the file system table"
@@ -604,6 +623,24 @@ if grep -E '^\s*linux\s' /boot/grub/grub.cfg | grep -qv 'root=' || ! grep -qE '^
 fi
 
 # the AI backend starts CPU-only until the user picks a model for their GPU
+# Voice typing (Super+H) for every user from the first login: the speech
+# engine (faster-whisper) in a shared environment that mkos-dictate looks
+# for first. Before, it only came with the optional AI setup, so a fresh
+# install had a voice typing key that did nothing. Retried like the package
+# download; if it still fails, the next MKOS update installs it.
+if [ -d /opt/aios ] && [ ! -x /opt/aios/.venv/bin/python3 ]; then
+    python -m venv /opt/aios/.venv
+fi
+if [ -x /opt/aios/.venv/bin/pip ]; then
+    for try in 1 2 3; do
+        /opt/aios/.venv/bin/pip install --quiet --disable-pip-version-check faster-whisper && break
+        echo "!! voice typing engine download attempt $try failed"; sleep $((try * 5))
+    done
+    chmod -R a+rX /opt/aios/.venv
+    /opt/aios/.venv/bin/python3 -c "import faster_whisper" 2>/dev/null \
+        || echo "!! voice typing engine not installed now — the first update will install it"
+fi
+
 if [ -f /opt/aios/config/aios.env.example ] && [ ! -f /opt/aios/config/aios.env ]; then
     cp /opt/aios/config/aios.env.example /opt/aios/config/aios.env
     sed -i -e 's/^AIOS_VL_NGL=.*/AIOS_VL_NGL=0/' -e 's/^AIOS_BUDGET_MODE=.*/AIOS_BUDGET_MODE=ZERO_COST/' /opt/aios/config/aios.env

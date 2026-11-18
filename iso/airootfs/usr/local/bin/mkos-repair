@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# mkos-repair — fix an installed MKOS that will not start, from the live USB.
+#
+#   sudo mkos-repair            find the installed MKOS and repair its boot
+#   sudo mkos-repair /dev/X     use this root partition
+#
+# What it does, each step checked before the next:
+#   1. finds the root partition (label MKOS_ROOT, or an older PRAXIS_ROOT)
+#      and mounts it, with the btrfs subvolume layout the installer uses
+#   2. mounts the EFI partition the system's own fstab names
+#   3. adds the storage drivers to the boot image and rebuilds it; the new
+#      image must contain the NVMe and btrfs/ext4 drivers
+#   4. reinstalls GRUB to the EFI partition (plus the fallback loader that
+#      HP and Acer firmware use when they forget boot entries)
+#   5. rebuilds the boot menu; every Linux entry must carry root=
+#   6. makes MKOS the first entry in the firmware boot order
+# The original files are kept as *.mkos-repair-prev for comparison.
+set -Eeuo pipefail
+
+MNT=/mnt/mkos-repair
+info() { printf '\033[36m•\033[0m %s\n' "$*"; }
+ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
+die()  { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+
+[ "$EUID" -eq 0 ] || exec sudo "$0" "$@"
+
+cleanup() { umount -R "$MNT" 2>/dev/null || true; }
+trap cleanup EXIT
+
+# 1. root partition
+ROOT=${1:-}
+if [ -z "$ROOT" ]; then
+    ROOT=$(blkid -t LABEL=MKOS_ROOT -o device 2>/dev/null | head -1)
+    [ -n "$ROOT" ] || ROOT=$(blkid -t LABEL=PRAXIS_ROOT -o device 2>/dev/null | head -1)
+fi
+[ -b "${ROOT:-}" ] || die "no installed MKOS found (no partition labelled MKOS_ROOT). Run: sudo mkos-repair /dev/<partition>"
+FSTYPE=$(blkid -s TYPE -o value "$ROOT")
+info "installed MKOS: $ROOT ($FSTYPE)"
+mkdir -p "$MNT"
+if [ "$FSTYPE" = btrfs ]; then
+    mount -o subvol=@ "$ROOT" "$MNT" 2>/dev/null || mount "$ROOT" "$MNT"
+else
+    mount "$ROOT" "$MNT"
+fi
+[ -f "$MNT/etc/fstab" ] || die "$ROOT does not look like an installed MKOS (no /etc/fstab) — the install may not have finished; run the installer again"
+[ -x "$MNT/usr/bin/pacman" ] || die "the system on $ROOT is incomplete (packages missing) — the install did not finish; run the installer again"
+ok "mounted the installed system"
+
+# 2. everything else from its own fstab (EFI partition, /home, ...)
+mount --mkdir -a --target-prefix "$MNT" --fstab "$MNT/etc/fstab" 2>/dev/null \
+    || { info "fstab mounts reported a problem — checking the EFI partition by hand"; }
+ESP=""
+for d in boot/efi efi boot; do
+    mountpoint -q "$MNT/$d" && [ -d "$MNT/$d/EFI" ] && { ESP="/$d"; break; }
+done
+if [ -z "$ESP" ]; then
+    part=$(lsblk -nrpo NAME,PARTTYPE "$(lsblk -nrpo PKNAME "$ROOT")" | awk '$2=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"{print $1; exit}')
+    [ -n "$part" ] || die "no EFI partition found on the disk"
+    mkdir -p "$MNT/boot/efi"; mount "$part" "$MNT/boot/efi"; ESP=/boot/efi
+fi
+ok "EFI partition mounted at $ESP"
+
+# 3. boot image
+for f in /etc/default/grub /etc/mkinitcpio.conf /boot/grub/grub.cfg; do
+    [ -f "$MNT$f" ] && cp -a "$MNT$f" "$MNT$f.mkos-repair-prev"
+done
+arch-chroot "$MNT" /bin/bash -euo pipefail <<'CHROOT'
+KV=$(ls /usr/lib/modules | sort -V | tail -1); WANT=""
+for m in vmd nvme ahci sd_mod uas usb_storage mmc_block sdhci sdhci_pci sdhci_acpi btrfs ext4; do
+    modinfo -k "$KV" "$m" >/dev/null 2>&1 && WANT="$WANT $m"
+done
+install -d -m755 /etc/mkinitcpio.conf.d
+printf '# MKOS: storage drivers so the boot image finds the root disk on any PC\nMODULES+=(%s)\n' "${WANT# }" \
+    >/etc/mkinitcpio.conf.d/mkos-storage.conf
+mkinitcpio -P
+for img in /boot/initramfs-*.img; do
+    case "$img" in *fallback*) continue ;; esac
+    lsinitcpio "$img" | grep -qE '/nvme(-core)?\.ko' || grep -qE '/nvme(-core)?\.ko' "/usr/lib/modules/$KV/modules.builtin" \
+        || { echo "boot image $img has no NVMe driver" >&2; exit 1; }
+done
+CHROOT
+ok "boot image rebuilt and checked"
+
+# 4. + 5. GRUB and the boot menu
+arch-chroot "$MNT" /bin/bash -euo pipefail -s "$ESP" <<'CHROOT'
+ESP=$1
+grub-install --target=x86_64-efi --efi-directory="$ESP" --bootloader-id=MKOS --recheck
+# fallback loader: firmware that loses its boot entries still finds this one
+grub-install --target=x86_64-efi --efi-directory="$ESP" --bootloader-id=MKOS --removable
+grub-mkconfig -o /boot/grub/grub.cfg.new
+if grep -E '^\s*linux\s' /boot/grub/grub.cfg.new | grep -qv 'root=' || ! grep -qE '^\s*linux\s.*root=' /boot/grub/grub.cfg.new; then
+    echo "the rebuilt boot menu has an entry without root= — keeping the old one" >&2
+    rm -f /boot/grub/grub.cfg.new; exit 1
+fi
+mv -f /boot/grub/grub.cfg.new /boot/grub/grub.cfg
+CHROOT
+ok "GRUB reinstalled and boot menu rebuilt (every entry has root=)"
+
+# 6. first in the firmware boot order
+if command -v efibootmgr >/dev/null; then
+    num=$(efibootmgr | awk '/ MKOS$|\tMKOS|MKOS\t/{print substr($1,5,4); exit}')
+    [ -n "$num" ] || num=$(efibootmgr | awk '/MKOS/{print substr($1,5,4); exit}')
+    if [ -n "$num" ]; then
+        order=$(efibootmgr | sed -n 's/^BootOrder: //p' | tr ',' '\n' | grep -vx "$num" | paste -sd,)
+        efibootmgr -o "$num${order:+,$order}" >/dev/null && ok "MKOS is first in the firmware boot order"
+    fi
+fi
+
+ok "repair finished — remove the USB and restart"

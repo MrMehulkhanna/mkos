@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=MKOS Repair
+Comment=Fix an installed MKOS that will not start (boot image, boot menu, firmware entry)
+Exec=kitty --class mkos-repair --title "MKOS Repair" -e bash -c 'sudo mkos-repair; echo; read -rp "Press Enter to close… " _'
+Icon=system-run
+Terminal=false
+Categories=System;
