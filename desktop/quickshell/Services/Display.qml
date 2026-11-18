@@ -47,9 +47,18 @@ done`]
                 for (const m of Hyprland.monitors.values) {
                     const ipc = m.lastIpcObject || {}
                     const e = byConn[m.name] || {}
+                    // A readable name: the model Hyprland reports ("KG271 X1"),
+                    // unless that is only a hex code ("0x4180"); then the first
+                    // text in the EDID ("ATNA56AC02-1"), if it is real text —
+                    // for some monitors that is binary noise like <"x*)% —
+                    // and otherwise the connector.
+                    const hypr = String(ipc.model || "")
+                    const sane = t => /^[A-Za-z0-9][A-Za-z0-9 ._+-]{2,}$/.test(t)
+                    const label = (sane(hypr) && !/^0x[0-9a-f]+$/i.test(hypr)) ? hypr
+                        : (sane(e.model || "") ? e.model : m.name)
                     out.push({ name: m.name, w: m.width, h: m.height, refresh: Math.round(ipc.refreshRate || 0),
                                scale: m.scale, x: m.x, y: m.y, modes: ipc.availableModes || [],
-                               oled: !!e.oled, vendor: e.vendor || "", model: e.model || "", hdr_nits: e.hdr_nits || "" })
+                               oled: !!e.oled, vendor: e.vendor || "", model: label, hdr_nits: e.hdr_nits || "" })
                 }
                 // Record the EDID verdict on its own. panels is a join
                 // against Hyprland.monitors, and if that list has not arrived

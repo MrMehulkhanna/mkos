@@ -417,7 +417,7 @@ hl.bind(mainMod .. " + V", hl.dsp.window.float({ action = "toggle" }), { descrip
 hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(menu), { description = "Apps: App menu" })
 hl.bind(mainMod .. " + L", hl.dsp.exec_cmd("pidof hyprlock || hyprlock"), { description = "System: Lock screen" })  -- lock screen (|| guard: never stack lockers)
 -- Super+D → Show Desktop (toggle minimize/reveal wallpaper, as on Windows)
-hl.bind(mainMod .. " + D", hl.dsp.exec_cmd("mkos-win show-desktop"), { description = "Windows: Show desktop (toggle all windows)" })
+hl.bind(mainMod .. " + SHIFT + D", hl.dsp.exec_cmd("mkos-win show-desktop"), { description = "Windows: Show desktop (toggle all windows)" })
 -- Super+Tab → workspace overview (grid of all 12); rofi window switcher moved to Super+Shift+Tab
 hl.bind(mainMod .. " + TAB",         hl.dsp.exec_cmd("quickshell ipc call shell toggle ws"), { description = "Workspaces: Overview of all workspaces" })
 hl.bind(mainMod .. " + SHIFT + TAB", hl.dsp.exec_cmd("rofi -show window"), { description = "Windows: Switch between windows" })
@@ -462,10 +462,10 @@ hl.bind(mainMod .. " + P", hl.dsp.exec_cmd("quickshell ipc call shell settings D
 hl.bind(mainMod .. " + SPACE", hl.dsp.exec_cmd("quickshell ipc call shell toggle launcher"), { description = "MKOS: Search and launch" })
 -- Super+B → widget board (StandBy-style tiles: clock, calendar, battery, sys, media, weather)
 hl.bind(mainMod .. " + B", hl.dsp.exec_cmd("quickshell ipc call shell toggle widgets"), { description = "MKOS: Widgets" })
--- Super+Shift+D: share this screen with another MKOS machine.
+-- Super+D: share this screen with another MKOS machine.
 -- Not Shift+S — that is already the area screenshot, and binding it twice
 -- meant every attempt to share the screen fired slurp instead.
-hl.bind(mainMod .. " + SHIFT + D", hl.dsp.exec_cmd("quickshell ipc call shell toggle share"), { description = "MKOS: Share screen" })
+hl.bind(mainMod .. " + D", hl.dsp.exec_cmd("quickshell ipc call shell toggle share"), { description = "MKOS: Share screen" })
 -- Super+Alt+D: leave a shared screen you are watching. The viewer is a
 -- fullscreen window with no buttons of its own, so it needs a way out.
 hl.bind(mainMod .. " + ALT + D", hl.dsp.exec_cmd("mkos-share disconnect"), { description = "MKOS: Stop watching a shared screen" })

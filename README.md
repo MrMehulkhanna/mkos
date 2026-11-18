@@ -123,7 +123,7 @@ it says so and offers to restart, naming which.
 
 Two MKOS PCs on the same network (or one Ethernet cable between them) can
 work as one desk. Four pieces, each usable on its own, all in
-`Super+Shift+D` (the Share screen window) and Settings:
+`Super+D` (the Share screen window) and Settings:
 
 **1. Screen share — the other PC becomes a monitor.** Turn on *Allow screen
 share* on the PC whose screen you want to extend; on the other PC open the
@@ -265,7 +265,7 @@ curl -sL https://raw.githubusercontent.com/MrMehulkhanna/mkos/main/iso/airootfs/
 ```
 Super              search and launch          Super+I        the assistant
 Super+H            voice typing               Super+O        control centre
-Super+← →          snap left / right          Super+Shift+D  share this screen
+Super+← →          snap left / right          Super+D  share this screen
 Super+Shift+O      copy text off the screen   Ctrl+Shift+Esc task manager
 Super+Z            minimise                   Super+G        game mode
 ```
@@ -318,7 +318,7 @@ The sections above are the reasons each piece exists. This is the whole list.
 | **Task manager** | `Ctrl+Shift+Esc` — CPU *and* GPU use per process, with a stop button for running AI jobs. |
 | **Tools** | Clipboard history `Super+Shift+V`, emoji `Super+.`, colour picker `Super+Shift+C`, screen recorder `Super+Shift+R`, notes `Super+N`, screenshot `Print`. |
 | **Wallpapers** | Thirteen original stills and three seamless live ones, decoded on the integrated GPU so the discrete card can idle. |
-| **Two PCs, one desk** | `Super+Shift+D` — another MKOS PC as an extra monitor (4:4:4, ~50 ms), one mouse and keyboard across both, a shared clipboard (text, images, files), and drag-to-arrange in Settings → Display. Wi-Fi or one Ethernet cable. |
+| **Two PCs, one desk** | `Super+D` — another MKOS PC as an extra monitor (4:4:4, ~50 ms), one mouse and keyboard across both, a shared clipboard (text, images, files), and drag-to-arrange in Settings → Display. Wi-Fi or one Ethernet cable. |
 | **Speakers** | Settings → Sound — play on several speakers at once, in sync. |
 | **Settings** | Wi-fi, bluetooth, audio, displays, dock, power, date and time, appearance, shortcuts, AI models, and a Health page — one window. |
 
@@ -349,7 +349,7 @@ The essentials. The full searchable list is in **Settings › Shortcuts**.
 | `Super+I` | AI assistant | `Super+↑ / ↓` | Maximise / restore | `Super+Shift+H` | Speak a command |
 | `Super+O` | Control Center | `Super+Alt+1/2/3` | Thirds | `Super+Shift+O` | Copy text from screen |
 | `Super+Tab` | All workspaces | `Super+Alt+M` | Next layout | `Super+Shift+V` | Clipboard history |
-| `Super+B` | Widgets | `Super+Z` | Minimise | `Super+Shift+D` | Share screen |
+| `Super+B` | Widgets | `Super+Z` | Minimise | `Super+D` | Share screen |
 | `Super+Q` | Terminal | `Super+Shift+← / →` | Other monitor | `Super+Shift+C` | Colour picker |
 | `Super+L` | Lock | `Super+Shift+1…9` | Send to workspace | `Super+Shift+R` | Record screen |
 | `Super+N` | Quick note | `Super+C` | Close | `Print` | Screenshot |

@@ -561,7 +561,7 @@ OverlayWindow {
                         label: "Share this screen with another PC"
                         description: Share.serving
                             ? "Sharing now on port " + Share.port + ". " + Share.clients + (Share.clients === 1 ? " viewer" : " viewers") + "."
-                            : "Use another MKOS machine as a second display, or show its screen here.  Super+Shift+D"
+                            : "Use another MKOS machine as a second display, or show its screen here.  Super+D"
                         Btn {
                             icon: "monitor"
                             label: Share.serving ? "Sharing — open" : "Open"
@@ -724,7 +724,7 @@ OverlayWindow {
                 label: "Screen share app"
                 description: Share.serving
                     ? "Currently sharing on port " + Share.port + " (" + Share.clients + (Share.clients === 1 ? " viewer" : " viewers") + ") · PIN: " + (Share.pairCode || "----")
-                    : (Share.viewing ? "Viewing " + Share.viewTarget + " fullscreen" : "Open the screen share window to share or connect · Super+Shift+D")
+                    : (Share.viewing ? "Viewing " + Share.viewTarget + " fullscreen" : "Open the screen share window to share or connect · Super+D")
                 Btn {
                     icon: "monitor"
                     label: Share.serving ? "Sharing — Open" : (Share.viewing ? "Viewing — Open" : "Open")
