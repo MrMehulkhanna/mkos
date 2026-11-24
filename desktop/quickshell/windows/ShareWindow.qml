@@ -711,6 +711,48 @@ OverlayWindow {
                 }
             }
 
+            // ── desk: this laptop, a real monitor and the paired PC, one step ──
+            // Checks the cable, SSH and pairing itself and says exactly what
+            // is wrong rather than half-connecting (mkos-share desk).
+            Column {
+                width: parent.width; spacing: Theme.spaceMd
+                Text {
+                    text: "CONNECT DESK  ·  this laptop, a monitor, and the paired PC"
+                    color: Theme.muted
+                    font.family: Theme.font; font.pixelSize: Theme.fontXs; font.weight: Font.DemiBold
+                    font.letterSpacing: 1.2
+                }
+                Text {
+                    width: parent.width; wrapMode: Text.WordWrap
+                    text: "One button: checks the cable and the paired PC, starts sharing, and arranges all three screens left to right. Drag any of them afterward in Settings > Display to change the order."
+                    color: Theme.text2
+                    font.family: Theme.font; font.pixelSize: Theme.fontSm
+                }
+                Row {
+                    spacing: Theme.spaceSm
+                    Btn {
+                        icon: "monitor"; label: deskProc.running ? "Connecting…" : "Connect desk"
+                        active: !deskProc.running; iconColor: Theme.onAccent
+                        onClicked: if (!deskProc.running) { deskLabel.text = ""; deskProc.running = true }
+                    }
+                }
+                Text {
+                    id: deskLabel
+                    width: parent.width; wrapMode: Text.WordWrap
+                    color: Theme.text2; font.family: Theme.font; font.pixelSize: Theme.fontSm
+                }
+                Process {
+                    id: deskProc
+                    command: ["mkos-share", "desk"]
+                    stdout: StdioCollector { id: deskOut }
+                    stderr: StdioCollector { id: deskErr }
+                    onExited: {
+                        const text = ((deskOut.text || "") + "\n" + (deskErr.text || "")).replace(/\x1b\[[0-9;]*m/g, "").trim()
+                        deskLabel.text = text || (deskProc.exitCode === 0 ? "Done." : "Could not connect the desk.")
+                    }
+                }
+            }
+
             // ── remote-run: run things on the paired PC over SSH ──────────
             // One keypair exchange, both directions, over the same TLS-PSK
             // link; after that this is as fast as remote execution gets —

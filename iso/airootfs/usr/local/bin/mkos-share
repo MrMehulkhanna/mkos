@@ -900,6 +900,85 @@ subprocess.run(["hyprctl", "eval", "\n".join(lua)], stdout=subprocess.DEVNULL)
 # mkos-share place NAME=X,Y ... — exact positions in logical pixels, from
 # the drag-to-arrange view. Remembered like arrange, with the extra display
 # saved as SHARED so it goes back there next time.
+# ── desk: connect this laptop, a real monitor and the paired PC, one step ──
+# "my laptop, then the monitor, then the other PC" — left to right. Every
+# step is checked; nothing is left half-set-up or silently assumed to work.
+cmd_desk() {
+    local peer_file="$HOME/.config/mkos/remote-peer"
+    local key="$HOME/.ssh/mkos_remote"
+    local ssh_opts=(-i "$key" -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new)
+
+    # ── preflight: every failure names the exact fix, and never leaves a
+    # share listening if the desk could not actually be built ──
+    local iface; iface=$(nmcli -t -f DEVICE,CONNECTION device status 2>/dev/null         | awk -F: '$2=="mkos-direct"{print $1; exit}')
+    [ -n "$iface" ] || { cmd_stop >/dev/null 2>&1; die "no direct-cable network device found — is the cable plugged in?"; }
+    [ "$(cat "/sys/class/net/$iface/carrier" 2>/dev/null)" = "1" ]         || { cmd_stop >/dev/null 2>&1; die "the cable shows no link on $iface — plug it in at both ends"; }
+
+    [ -s "$peer_file" ] || { cmd_stop >/dev/null 2>&1; die "no PC is paired yet — on the other PC run: mkos-remote pair $(ip -4 -br addr show "$iface" 2>/dev/null | awk '{print $3}' | cut -d/ -f1)"; }
+    local p_user p_ip p_host; read -r p_user p_ip p_host < "$peer_file"
+
+    ping -c1 -W2 "$p_ip" >/dev/null 2>&1         || { cmd_stop >/dev/null 2>&1; die "$p_host ($p_ip) is not answering — is it on and the cable plugged in?"; }
+    ssh "${ssh_opts[@]}" "$p_user@$p_ip" true 2>/dev/null         || { cmd_stop >/dev/null 2>&1; die "cannot SSH into $p_host — on it, run: sudo systemctl enable --now sshd"; }
+    info "$p_host is reachable — building the desk"
+
+    # ── exactly one healthy share ──
+    cmd_stop >/dev/null 2>&1
+    cmd_extend >/dev/null
+
+    local my_ip; my_ip=$(ip -4 -br addr show "$iface" | awk '{print $3}' | cut -d/ -f1)
+    local port; port=$(cat "$PORT_FILE" 2>/dev/null || echo "$DEFAULT_PORT")
+    local env_snip='U=$(id -u); export XDG_RUNTIME_DIR=/run/user/$U WAYLAND_DISPLAY=$(ls /run/user/$U | grep -m1 -E "^wayland-[0-9]+$") HYPRLAND_INSTANCE_SIGNATURE=$(ls -t /run/user/$U/hypr | head -1);'
+    ssh "${ssh_opts[@]}" "$p_user@$p_ip"         "$env_snip mkos-share disconnect >/dev/null 2>&1; (setsid mkos-share connect $my_ip:$port > /tmp/mkos-desk-view.out 2>&1 </dev/null &)"         || { cmd_stop >/dev/null 2>&1; die "could not start the picture on $p_host"; }
+
+    # ── wait for the extra display to actually appear ──
+    local new="" i
+    for i in $(seq 1 40); do
+        new=$(monitors | python3 -c 'import json,sys;print(next((m["name"] for m in json.load(sys.stdin) if m["name"].startswith("HEADLESS")), ""))' 2>/dev/null)
+        [ -n "$new" ] && break
+        sleep 0.25
+    done
+    [ -n "$new" ] || { cmd_stop >/dev/null 2>&1; die "$p_host connected, but the shared screen never appeared"; }
+
+    # ── left to right: this laptop, the real monitor, then $p_host ──
+    local layout; layout=$(monitors | python3 -c '
+import json, sys
+ms = {m["name"]: m for m in json.load(sys.stdin)}
+order = [n for n in ("eDP-1", "HDMI-A-1") if n in ms]
+order += [n for n in ms if n not in order and not n.startswith("HEADLESS")]
+order.append("'"$new"'")
+x = 0
+for n in order:
+    m = ms[n]
+    print(f"{n}={x},0")
+    x += round(m["width"] / m["scale"])
+')
+    cmd_place $layout
+    ok "desk ready: $(echo "$layout" | cut -d= -f1 | paste -sd' -> ')"
+
+    # ── verify, rather than assume ──
+    local shot; shot=$(ssh "${ssh_opts[@]}" "$p_user@$p_ip"         "$env_snip grim -s 0.2 -o eDP-1 -" 2>/dev/null | base64 -w0)
+    if [ -n "$shot" ]; then
+        local bright; bright=$(echo "$shot" | base64 -d | python3 -c '
+import sys, io
+from PIL import Image
+import numpy as np
+print(round(np.asarray(Image.open(io.BytesIO(sys.stdin.buffer.read())).convert("L")).mean(), 1))
+' 2>/dev/null)
+        if [ -n "$bright" ] && python3 -c "exit(0 if $bright > 5 else 1)" 2>/dev/null; then
+            ok "$p_host's screen is showing the picture (brightness $bright)"
+        else
+            warn "$p_host's screen looks black (brightness ${bright:-unknown}) — check it there"
+        fi
+    else
+        warn "could not screenshot $p_host to confirm the picture arrived"
+    fi
+    if [ -f "$STATE_DIR/cursor.pid" ] && kill -0 "$(cat "$STATE_DIR/cursor.pid")" 2>/dev/null; then
+        ok "the pointer moves locally on $p_host (no video delay)"
+    else
+        warn "the pointer sender did not start — the mouse will still work, just through the video"
+    fi
+}
+
 cmd_place() {
     [ $# -ge 1 ] || die "usage: mkos-share place OUTPUT=X,Y ..."
     mkdir -p "${ORDER_FILE%/*}"
@@ -1076,6 +1155,7 @@ case "${1:-}" in
     status)  cmd_status ;;
     arrange) shift; cmd_arrange "$@" ;;
     place)   shift; cmd_place "$@" ;;
+    desk)    cmd_desk ;;
     sound)
         # mkos-share sound on|off — send the sound to the viewer too, or
         # keep it on this PC's speakers only; remembered for every share
