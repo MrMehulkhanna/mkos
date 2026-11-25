@@ -5,6 +5,7 @@
 #   mkos-remote terminal       open a terminal on the paired PC
 #   mkos-remote run FILE       copy a script there and run it, output shown
 #   mkos-remote exec CMD...    run one command there, output shown
+#   mkos-remote send FILE [DEST]  copy a file/folder there, resumable
 #   mkos-remote forget         drop the paired PC
 #   mkos-remote status
 #
@@ -77,5 +78,19 @@ case "${1:-status}" in
             ssh ${ssh_opts[*]} '$user@$ip' 'chmod +x \"$remote\"; \"$remote\"; rc=\$?; rm -f \"$remote\"; exit \$rc'
             echo; echo \"(exit code \$?)\"
             read -rp 'Press Enter to close… ' _" ;;
+    send)
+        shift
+        src=${1:-}; dest=${2:-}
+        [ -n "$src" ] && [ -e "$src" ] || die "usage: mkos-remote send FILE_OR_DIR [DEST_PATH]"
+        command -v rsync >/dev/null || die "rsync is not installed here"
+        read -r user ip host <<<"$(peer)"
+        [ -n "${ip:-}" ] || die "no PC paired yet — run: mkos-remote pair"
+        ssh "${ssh_opts[@]}" "$user@$ip" 'command -v rsync >/dev/null' \
+            || die "rsync is missing on $host — run: sudo mkos-update (there), then retry"
+        [ -n "$dest" ] || dest="~/$(basename "$src")"
+        info "sending $src to $host:$dest (resumable — safe to re-run if interrupted)"
+        rsync -aP --partial -e "ssh ${ssh_opts[*]} -o Compression=no -c aes128-gcm@openssh.com" \
+            "$src" "$user@$ip:$dest" || die "transfer failed or was interrupted — re-run the same command to resume"
+        ok "sent: $src -> $host:$dest" ;;
     *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
